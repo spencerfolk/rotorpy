@@ -157,7 +157,7 @@ class Plotter():
             ax.set_ylabel("angular velocity, rad/s")
             ax.grid()
             ax.legend(('x','y','z'))
-            ax.set_xlabel("Time, s")
+            ax.set_xlabel("time, s")
 
         if plot_estimator:
             if self.estimator_exists:
