@@ -1,6 +1,8 @@
 # RotorPy
 A Python-based multirotor simulation environment with aerodynamic wrenches, useful for education and research in estimation, planning, and control for UAVs.
 
+<img src="/media/double_pillar.gif" width="32%"/><img src="/media/gusty.gif" width="32%"/><img src="/media/minsnap.gif" width="32%"/> 
+
 ## Purpose and Scope
 The purpose of this simulator is to add lumped parameter representations of the UAV aerodynamics to to a multirotor UAV (quadrotor unless otherwise noted). These aerodynamic effects, listed below, are negligible at hover in still air; however, as relative airspeed increases (e.g. for aggressive maneuvers or in the presence of high winds), these aerodynamic effects quickly become noticeable. 
 
