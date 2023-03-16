@@ -1,25 +1,19 @@
-# RotorPy
+# Modules
 
-RotorPy is a simple dynamics simulator for teaching aerial robotics planning and control and preliminary probing of interesting research questions.
+RotorPy is a simple dynamics simulator for teaching aerial robotics planning and control and preliminary probing of interesting research questions. It is organized into a set of modules: 
 
-It was developed initially to cater to the University of Pennsylvania aerial robotics class, and so it has unique aspirations.
-* Small. Unlike a black box simulator, the engine is intended to be transparent from top to bottom to a student of robotics.
-* Easy to install. Dependencies are minimized to ensure easy native installation on Linux, Windows, and Mac.
-* Pedagogical. Structure and notation mirror course content, and documentation should be precise.
+* **Vehicles** - Contains the continuous-time dynamics for the UAV of interest. 
+* **Sensors** - Transforms ground truth vehicle state into noisy and biased measurements. 
+* **Worlds** - Contains `json` map files for constructing world bounds and obstacles. 
+* **Controllers** - Stabilizes the vehicle to a trajectory. 
+* **Trajectories** - Dictates the desired motion of the vehicle in time. 
+* **Wind** - Custom spatial and/or temporal vector fields that add external disturbances to the vehicle.  
+* **Estimators** - Use measurements from sensors and a model of the dynamics to filter or estimate beliefs of states or parameters. 
 
-# License
+These modules come together in `environment.py` which contains the necessary functions for instantiation, execution, and plotting/saving. The simulation is actually carried out in `simulate.py` which will step the vehicle forward in time, governed by the dynamics, trajectory, controller, and sensor measurements. 
 
-The package rotorpy itself is released under the MIT License. Contributions of improvements, bug fixes, and documentation are welcome. Course instructors would enjoy hearing if you use rotorpy as a template for other projects.
+# License Note
 
-Please note that rotorpy (and its open source license) does not include course materials such as assignments, solutions, and server integrations.
+The package rotorpy itself is released under the MIT License. Contributions of improvements, bug fixes, and documentation are welcome. Course instructors would enjoy hearing if you use RotorPy as a template for other projects.
 
-# RotorPy Contributors (nonexhaustive) 
-
-James Paulos (Instructor 2020-2021)
-Dan Mox (TA 2020)
-Rebecca Li (TA 2020)
-Laura Jarin-Lipschitz (TA 2020)
-Austin Chen (TA 2020)
-Spencer Folk (TA 2021)
-Xu Liu (TA 2021)
-Fernando Cladera (TA 2021)
+Please note that RotorPy (and its open source license) does not include course materials such as assignments, solutions, and server integrations.
