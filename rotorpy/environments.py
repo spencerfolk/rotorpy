@@ -24,10 +24,10 @@ class Environment():
                        trajectory,              # trajectory object, must be specified.
                        wind_profile = None,     # wind profile object, if none is supplied it will choose no wind. 
                        imu = None,              # imu sensor object, if none is supplied it will choose a default IMU sensor.
-                       mocap = None,            # mocap sensor object, if none is supplied it will choose a default mocap.  
+                       mocap = None,            # mocap sensor object, if none is supplied it will choose a default mocap.
+                       world        = None,     # The world object
                        estimator    = None,     # estimator object
                        sim_rate     = 100,      # The update frequency of the simulator in Hz
-                       world_fname  = None,     # The world filename, when specified it will load the file located in ../worlds
                        safety_margin = 0.25,    # The radius of the safety region around the robot. 
                        ):
 
@@ -38,13 +38,13 @@ class Environment():
 
         self.safety_margin = safety_margin
 
-        if world_fname is None:
-            # If no world JSON file is specified, assume that it means that the intended world is free space.
+        if world is None:
+            # If no world is specified, assume that it means that the intended world is free space.
             wbound = 3 
             self.world = World.empty((-wbound, wbound, -wbound, 
                                        wbound, -wbound, wbound))
         else:
-            self.world = World.from_file(os.path.abspath(os.path.join(os.path.dirname(__file__),'worlds',world_fname+'.json')))
+            self.world = world
 
         if wind_profile is None:
             # If wind is not specified, default to no wind. 

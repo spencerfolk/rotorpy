@@ -32,16 +32,27 @@ from rotorpy.sensors.external_mocap import MotionCapture
 # You can also specify a state estimator. This is optional. If no state estimator is supplied it will default to null. 
 from rotorpy.estimators.wind_ukf import WindUKF
 
+# Also, worlds are how we construct obstacles. The following class contains methods related to constructing these maps. 
+from rotorpy.world import World
+
 # Reference the files above for more documentation. 
 
 # Other useful imports
 import numpy as np                  # For array creation/manipulation
 import matplotlib.pyplot as plt     # For plotting, although the simulator has a built in plotter
 from scipy.spatial.transform import Rotation  # For doing conversions between different rotation descriptions, applying rotations, etc. 
+import os                           # For path generation
 
 """
 Instantiation
 """
+
+# Obstacle maps can be loaded in from a JSON file using the World.from_file(path) method. Here we are loading in from 
+# an existing file under the rotorpy/worlds/ directory. However, you can create your own world by following the template
+# provided (see rotorpy/worlds/README.md), and load that file anywhere using the appropriate path.
+world = World.from_file(os.path.abspath(os.path.join(os.path.dirname(__file__),'..','rotorpy','worlds','double_pillar.json')))
+
+# "world" is an optional argument. If you don't load a world it'll just provide an empty playground! 
 
 # An instance of the simulator can be generated as follows: 
 sim_instance = Environment(vehicle=Multirotor(quad_params),           # vehicle object, must be specified. 
@@ -52,7 +63,7 @@ sim_instance = Environment(vehicle=Multirotor(quad_params),           # vehicle 
                            imu          = None,                       # OPTIONAL: imu sensor object, if none is supplied it will choose a default IMU sensor.
                            mocap        = None,                       # OPTIONAL: mocap sensor object, if none is supplied it will choose a default mocap.  
                            estimator    = None,                       # OPTIONAL: estimator object
-                           world_fname  = 'double_pillar',            # OPTIONAL: the world, same name as the file in rotorpy/worlds/, default (None) is empty world
+                           world        = world,                      # OPTIONAL: the world, same name as the file in rotorpy/worlds/, default (None) is empty world
                            safety_margin= 0.25                        # OPTIONAL: defines the radius (in meters) of the sphere used for collision checking
                        )
 
