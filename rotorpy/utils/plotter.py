@@ -183,7 +183,7 @@ class Plotter():
 
         return
 
-    def animate_results(self, fname=None):
+    def animate_results(self, animate_wind, fname=None):
         """
         Animate the results
         
@@ -191,7 +191,7 @@ class Plotter():
 
         # Animation (Slow)
         # Instead of viewing the animation live, you may provide a .mp4 filename to save.
-        ani = animate(self.time, self.x, self.R, world=self.world, filename=fname)
+        ani = animate(self.time, self.x, self.R, self.wind, animate_wind, world=self.world, filename=fname)
         plt.show()
 
         return
