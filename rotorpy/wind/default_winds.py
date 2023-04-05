@@ -104,7 +104,6 @@ class LadderWind(object):
             max := array of maximum wind speeds across each axis
             duration := array of durations for each step
             Nstep := array for the integer number of discretized steps between min and max across each axis
-            start_step := 
         """
 
         # Check the inputs for consistency, quit and raise a flag if the inputs aren't physically realizable

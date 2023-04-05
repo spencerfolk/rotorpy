@@ -96,6 +96,7 @@ class Environment():
                     plot_estimator  = True,     # Boolean: plots the estimator filter states and covariance diagonal elements
                     plot_imu        = True,     # Boolean: plots the IMU measurements
                     animate_bool    = False,    # Boolean: determines if the animation of vehicle state will play. 
+                    animate_wind    = False,    # Boolean: determines if the animation will include a wind vector.
                     verbose         = False,    # Boolean: will print statistics regarding the simulation. 
                     fname   = None      # Filename is specified if you want to save the animation. Default location is the home directory. 
                     ):
@@ -137,7 +138,7 @@ class Environment():
         visualizer = Plotter(self.result, self.world)
         if animate_bool:
             # Do animation here
-            visualizer.animate_results(fname=fname)
+            visualizer.animate_results(fname=fname, animate_wind=animate_wind)
         if plot:
             # Do plotting here
             visualizer.plot_results(plot_mocap=plot_mocap,plot_estimator=plot_estimator,plot_imu=plot_imu)

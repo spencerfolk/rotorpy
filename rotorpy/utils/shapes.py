@@ -269,9 +269,10 @@ class Quadrotor():
 
     def __init__(self, ax,
         arm_length=0.125, rotor_radius=0.08, n_rotors=4,
-        shade=True, color=None):
+        shade=True, color=None, wind=True):
 
         self.ax = ax
+        self.wind_bool = wind
 
         # Apply same color to all rotor objects.
         if color is None:
@@ -291,14 +292,23 @@ class Quadrotor():
                                 0.1*rotor_radius,
                                 shade=shade,
                                 color=color) for _ in range(n_rotors)]
-        self.artists = tuple(itertools.chain.from_iterable(r.artists for r in self.rotors))
-        self.transform(np.zeros((3,)), np.identity(3))
+        artists = [r.artists for r in self.rotors]
+        if self.wind_bool:
+            self.wind_vector = [self.ax.quiver(0,0,0,0,0,0, color='k')]
+            artists.append(self.wind_vector)
+        self.artists = tuple(itertools.chain.from_iterable(artists))
+                             
+        self.transform(np.zeros((3,)), np.identity(3), np.zeros((3,)))
 
-    def transform(self, position, rotation):
+    def transform(self, position, rotation, wind=np.array([1,0,0])):
         position.shape = (3,1)
+        wind.shape = (3,1)
         for (r, pos) in zip(self.rotors, self.rotor_position.T):
             pos.shape = (3,1)
             r.transform(np.matmul(rotation,pos)+position, rotation)
+        if self.wind_bool:
+            self.wind_vector[0].remove()
+            self.wind_vector = [self.ax.quiver(position[0], position[1], position[2], wind[0], wind[1], wind[2], color='r', linewidth=1.5)]
 
 if __name__ == '__main__':
     from axes3ds import Axes3Ds
