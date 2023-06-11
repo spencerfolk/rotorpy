@@ -98,6 +98,7 @@ def simulate(world, initial_state, vehicle, controller, trajectory, wind_profile
         control = [sanitize_control_dic(controller.update(time[-1], mocap_measurements[-1], flat[-1]))]
     else:
         control = [sanitize_control_dic(controller.update(time[-1], state[-1], flat[-1]))]
+        control_ref = [sanitize_control_dic(controller.update_ref(time[-1], flat[-1]))]
     state_dot =  vehicle.statedot(state[0], control[0]['cmd_motor_speeds'], t_step)
     imu_measurements.append(imu.measurement(state[-1], state_dot, with_noise=True))
     imu_gt.append(imu.measurement(state[-1], state_dot, with_noise=False))
