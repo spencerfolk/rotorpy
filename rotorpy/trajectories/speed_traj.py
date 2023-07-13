@@ -70,9 +70,10 @@ class ConstantSpeed(object):
 
         yaw    = 0
         yaw_dot = 0
+        yaw_ddot = 0
 
         flat_output = { 'x':x, 'x_dot':x_dot, 'x_ddot':x_ddot, 'x_dddot':x_dddot, 'x_ddddot':x_ddddot,
-                        'yaw':yaw, 'yaw_dot':yaw_dot}
+                        'yaw':yaw, 'yaw_dot':yaw_dot, 'yaw_ddot':yaw_ddot}
         return flat_output
 
 if __name__=="__main__":

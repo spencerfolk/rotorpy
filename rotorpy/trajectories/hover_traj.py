@@ -35,7 +35,8 @@ class HoverTraj(object):
         x_ddddot = np.zeros((3,))
         yaw    = 0
         yaw_dot = 0
+        yaw_ddot = 0
 
         flat_output = { 'x':x, 'x_dot':x_dot, 'x_ddot':x_ddot, 'x_dddot':x_dddot, 'x_ddddot':x_ddddot,
-                        'yaw':yaw, 'yaw_dot':yaw_dot}
+                        'yaw':yaw, 'yaw_dot':yaw_dot, 'yaw_ddot':yaw_ddot}
         return flat_output

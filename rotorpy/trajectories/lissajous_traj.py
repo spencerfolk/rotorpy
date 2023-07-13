@@ -66,10 +66,12 @@ class TwoDLissajous(object):
         if self.yaw_bool:
             yaw = np.pi/4*np.sin(np.pi*t)
             yaw_dot = np.pi*np.pi/4*np.cos(np.pi*t)
+            yaw_ddot = np.pi*np.pi*np.pi/4*np.cos(np.pi*t)
         else:
             yaw = 0
             yaw_dot = 0
+            yaw_ddot = 0
 
         flat_output = { 'x':x, 'x_dot':x_dot, 'x_ddot':x_ddot, 'x_dddot':x_dddot, 'x_ddddot':x_ddddot,
-                        'yaw':yaw, 'yaw_dot':yaw_dot}
+                        'yaw':yaw, 'yaw_dot':yaw_dot, 'yaw_ddot':yaw_ddot}
         return flat_output

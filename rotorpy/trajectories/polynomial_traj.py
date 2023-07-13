@@ -86,6 +86,7 @@ class Polynomial(object):
         x_ddddot = np.zeros((3,))
         yaw = 0
         yaw_dot = 0
+        yaw_ddot = 0
 
         # Find interval index i and time within interval t.
         t = np.clip(t, self.t_start[0], self.t_start[-1]+self.T[-1])
@@ -103,5 +104,5 @@ class Polynomial(object):
             x_ddddot[j] = np.polyval(self.x_ddddot_poly[i,j,:], t)
 
         flat_output = { 'x':x, 'x_dot':x_dot, 'x_ddot':x_ddot, 'x_dddot':x_dddot, 'x_ddddot':x_ddddot,
-                        'yaw':yaw, 'yaw_dot':yaw_dot}
+                        'yaw':yaw, 'yaw_dot':yaw_dot, 'yaw_ddot':yaw_ddot}
         return flat_output
