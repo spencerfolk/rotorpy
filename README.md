@@ -50,13 +50,30 @@ As for adding more core functionality (e.g., sensors, new vehicle dynamics, anim
 
 If you are adding new functionality, as opposed to simply adding new controllers, wind fields, or trajectories, please make a new branch before starting to make those changes. 
 
-# In Literature
+# Citation
+
+If you use RotorPy for your work please cite our companion workshop paper contributed to the [RS4UAVs Workshop at ICRA 2023](https://imrclab.github.io/workshop-uav-sims-icra2023/): 
+
+```
+@article{folk2023rotorpy,
+  title={RotorPy: A Python-based Multirotor Simulator with Aerodynamics for Education and Research},
+  author={Folk, Spencer and Paulos, James and Kumar, Vijay},
+  journal={arXiv preprint arXiv:2306.04485},
+  year={2023}
+}
+```
+
+This paper addresses the theory, simulation framework, and benchmarking studies.
+
+# Elsewhere In Literature
 
 The following is a selection of papers that have used a previous version of RotorPy for generating their simulated results: 
 1. K. Y. Chee and M. A. Hsieh. "Learning-enhanced Nonlinear Model Predictive Control using Knowledge-based Neural Ordinary Differential Equations and Deep Ensembles," submitted to *5th Annual Learning for Dynamics \& Control Conference*, Philadelphia, PA USA, Jun 2023.
 2. K. Y. Chee, T. Z. Jiahao and M. A. Hsieh. "KNODE-MPC: A Knowledge-Based Data-Driven Predictive Control Framework for Aerial Robots,'' in *IEEE Robotics and Automation Letters*, vol. 7, no. 2, pp. 2819-2826, Apr 2022.
 3. Jiahao, Tom Z. and Chee, Kong Yao and Hsieh, M. Ani. "Online Dynamics Learning for Predictive Control with an Application to Aerial Robots," in *the Proc. of the 2022 Conference on Robot Learning (CoRL)*, Auckland, NZ, Dec 2022.
 4. K. Mao, J. Welde, M. A. Hsieh, and V. Kumar, “Trajectory planning for the bidirectional quadrotor as a differentially flat hybrid system,” in *2023 International Conference on Robotics and Automation (ICRA) (accepted)*, 2023.
+
+If you use this simulator for published work, let me know as I am happy to add your reference to this list. 
 
 # Acknowledgements
 
