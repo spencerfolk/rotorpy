@@ -98,18 +98,12 @@ class SE3Control(object):
             """Return normalized vector."""
             return x / np.linalg.norm(x)
 
-        # def vee_map(S):
-        #     """Return vector corresponding to given skew symmetric matrix."""
-        #     return np.array([-S[1,2], S[0,2], -S[0,1]])
-
         # Desired force vector.
         t = flat_output['x_ddot']+ np.array([0, 0, self.g])
         b3 = normalize(t) 
         F_des = self.mass * (t)# this is vectorized
 
-        # Desired thrust is force projects onto b3 axis.
-        # R = Rotation.from_quat(state['q']).as_matrix() #this is where most of the problem is, there is no error in rotation!
-        # b3 = R @ np.array([0, 0, 1])
+        # Control input 1: collective thrust. 
         u1 = np.dot(F_des, b3)
 
         # Desired orientation to obtain force vector.
@@ -120,10 +114,7 @@ class SE3Control(object):
         b1_des = np.cross(b2_des, b3_des)
         R_des = np.stack([b1_des, b2_des, b3_des]).T
 
-        R = R_des# assume we have perfect tracking on rotation
-        # Orientation error.
-        # S_err = 0.5 * (R_des.T @ R - R.T @ R_des)
-        # att_err = vee_map(S_err)
+        R = R_des # assume we have perfect tracking on rotation
         
         # Following section follows Mellinger paper to compute reference angular velocity
         dot_u1 = np.dot(b3,flat_output['x_dddot'])
@@ -143,10 +134,11 @@ class SE3Control(object):
         r_dot = flat_output['yaw_ddot'] *np.dot(np.array([0,0,1.0]), b3_des) #uniquely need yaw_ddot
         Alpha = np.array([p_dot, q_dot, r_dot]) 
 
-
-
+        # Control input 2: moment on each body axis
+    
         u2 =  self.inertia @ Alpha + np.cross(Omega, self.inertia @ Omega)
-        # print(u1,u2)
+
+        # Convert to cmd motor speeds. 
         TM = np.array([u1, u2[0], u2[1], u2[2]])
         cmd_motor_forces = self.TM_to_f @ TM
         cmd_motor_speeds = cmd_motor_forces / self.k_eta
