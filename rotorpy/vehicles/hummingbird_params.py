@@ -9,7 +9,7 @@ Notes:
 """
 import numpy as np
 
-d = 0.17
+d = 0.17 # Arm length
 
 quad_params = {
 
@@ -42,17 +42,16 @@ quad_params = {
     'c_Dz': 1e-2,  # parasitic drag in body z axis, N/(m/s)**2
 
     # Rotor properties
-    # See "System Identification of the Crazyflie 2.0 Nano Quadrocopter", Forster 2015.
     'k_eta': 5.57e-06,          # thrust coefficient N/(rad/s)**2
     'k_m':   1.36e-07,          # yaw moment coefficient Nm/(rad/s)**2
     'k_d':   1.19e-04,          # rotor drag coefficient N/(rad*m/s**2) = kg/rad
-    'k_z':   2.32e-04,         # induced inflow coefficient N/(rad*m/s**2) = kg/rad
+    'k_z':   2.32e-04,          # induced inflow coefficient N/(rad*m/s**2) = kg/rad
     'k_flap': 0.0,              # Flapping moment coefficient Nm/(rad*m/s**2) = kg*m/rad
 
     # Motor properties
-    'tau_m': 0.005,           # motor response time, seconds
+    'tau_m': 0.005,             # motor response time, seconds
     'rotor_speed_min': 0,       # rad/s
     'rotor_speed_max': 1500,    # rad/s
-    'motor_noise_std': 50,     # rad/s
+    'motor_noise_std': 50,      # rad/s
 
 }

@@ -11,7 +11,7 @@ Notes:
 """
 import numpy as np
 
-d = 0.043
+d = 0.043  # Arm length
 
 quad_params = {
 
@@ -26,12 +26,6 @@ quad_params = {
 
     # Geometric properties, all vectors are relative to the center of mass.
     'num_rotors': 4,                        # for looping over each actuator
-    # 'rotor_pos': {  
-    #                 'r1': np.array([0.046,  0,      0]),    # Location of Rotor 1, meters
-    #                 'r2': np.array([0,      0.046,  0]),    # Location of Rotor 2, meters
-    #                 'r3': np.array([-0.046, 0,      0]),    # Location of Rotor 3, meters
-    #                 'r4': np.array([0,      -0.046, 0]),    # Location of Rotor 4, meters
-    #              },
     'rotor_pos': {  
                     'r1': d*np.array([ 0.70710678118, 0.70710678118, 0]),    # Location of Rotor 1, meters
                     'r2': d*np.array([ 0.70710678118,-0.70710678118, 0]),    # Location of Rotor 2, meters
