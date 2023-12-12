@@ -18,4 +18,5 @@ setup(
             'scipy',
             'pandas',
             'ndsplines',
-            'timeout_decorator'])
+            'timeout_decorator',
+            'tqdm'])
