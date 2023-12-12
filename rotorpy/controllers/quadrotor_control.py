@@ -28,6 +28,7 @@ class SE3Control(object):
 
         self.num_rotors      = quad_params['num_rotors']
         self.rotor_pos       = quad_params['rotor_pos']
+        self.rotor_dir       = quad_params['rotor_directions']
 
         # Rotor parameters    
         self.rotor_speed_min = quad_params['rotor_speed_min'] # rad/s
@@ -56,11 +57,11 @@ class SE3Control(object):
 
         # Linear map from individual rotor forces to scalar thrust and vector
         # moment applied to the vehicle.
-        k = self.k_m/self.k_eta
+        k = self.k_m/self.k_eta  # Ratio of torque to thrust coefficient. 
 
         # Below is an automated generation of the control allocator matrix. It assumes that all thrust vectors are aligned
         # with the z axis and that the "sign" of each rotor yaw moment alternates starting with positive for r1.
-        self.f_to_TM = np.vstack((np.ones((1,self.num_rotors)),np.hstack([np.cross(self.rotor_pos[key],np.array([0,0,1])).reshape(-1,1)[0:2] for key in self.rotor_pos]), np.array([k*(-1)**i for i in range(self.num_rotors)]).reshape(1,-1)))
+        self.f_to_TM = np.vstack((np.ones((1,self.num_rotors)),np.hstack([np.cross(self.rotor_pos[key],np.array([0,0,1])).reshape(-1,1)[0:2] for key in self.rotor_pos]), (k * self.rotor_dir).reshape(1,-1)))
         self.TM_to_f = np.linalg.inv(self.f_to_TM)
 
     def update_ref(self, t, flat_output):
