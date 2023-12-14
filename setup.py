@@ -9,7 +9,7 @@ packages = list(filter(isdir, all_packages))
 setup(
     name='rotorpy',
     packages=packages,
-    version='0.1',
+    version='1.0.1',
     install_requires=[
             'cvxopt',
             'matplotlib == 3.2.2',
