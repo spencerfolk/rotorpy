@@ -32,7 +32,19 @@ def quat_dot(quat, omega):
 
 class Multirotor(object):
     """
-    Quadrotor forward dynamics model.
+    Multirotor forward dynamics model. 
+
+    states: [position, velocity, attitude, body rates, wind, rotor speeds]
+
+    Parameters:
+        quad_params: a dictionary containing relevant physical parameters for the multirotor. 
+        initial_state: the initial state of the vehicle. 
+        control_abstraction: the appropriate control abstraction that is used by the controller, options are...
+                                'cmd_motor_speed': the controller directly commands motor speeds. 
+                                'cmd_motor_force': the controller commands forces for each rotor.
+                                'cmd_ctbr': the controller commands a collective thrsut and body rates. 
+                                'cmd_ctbm': the controller commands a collective thrust and moments on the x/y/z body axes
+                                'cmd_vel': the controller commands a velocity vector in the body frame. 
     """
     def __init__(self, quad_params, initial_state = {'x': np.array([0,0,0]),
                                             'v': np.zeros(3,),
@@ -40,6 +52,7 @@ class Multirotor(object):
                                             'w': np.zeros(3,),
                                             'wind': np.array([0,0,0]),  # Since wind is handled elsewhere, this value is overwritten
                                             'rotor_speeds': np.array([1788.53, 1788.53, 1788.53, 1788.53])},
+                       control_abstraction='cmd_motor_speeds',
                 ):
         """
         Initialize quadrotor physical parameters.
@@ -95,8 +108,23 @@ class Multirotor(object):
         self.inv_inertia = inv(self.inertia)
         self.weight = np.array([0, 0, -self.mass*self.g])
 
+        # Control allocation
+        k = self.k_m/self.k_eta  # Ratio of torque to thrust coefficient. 
+
+        # Below is an automated generation of the control allocator matrix. It assumes that all thrust vectors are aligned
+        # with the z axis and that the "sign" of each rotor yaw moment alternates starting with positive for r1.
+        self.f_to_TM = np.vstack((np.ones((1,self.num_rotors)),np.hstack([np.cross(self.rotor_pos[key],np.array([0,0,1])).reshape(-1,1)[0:2] for key in self.rotor_pos]), (k * self.rotor_dir).reshape(1,-1)))
+        self.TM_to_f = np.linalg.inv(self.f_to_TM)
+
         # Set the initial state
         self.initial_state = initial_state
+
+        self.control_abstraction = control_abstraction
+
+        self.k_w = 1                # The body rate P gain        (for cmd_ctbr)
+        self.k_v = 10               # The *world* velocity P gain (for cmd_vel)
+        self.kp_att = 544           # The attitude P gain (for cmd_vel and cmd_ctatt)
+        self.kd_att = 46.64         # The attitude D gain (for cmd_vel and cmd_ctatt)
 
     def extract_geometry(self):
         """
@@ -113,13 +141,15 @@ class Multirotor(object):
 
         return
 
-    def statedot(self, state, cmd_rotor_speeds, t_step):
+    def statedot(self, state, control, t_step):
         """
         Integrate dynamics forward from state given constant cmd_rotor_speeds for time t_step.
         """
 
+        cmd_rotor_speeds = self.get_cmd_motor_speeds(state, control)
+
         # The true motor speeds can not fall below min and max speeds.
-        cmd_rotor_speeds = np.clip(cmd_rotor_speeds, self.rotor_speed_min, self.rotor_speed_max)
+        cmd_rotor_speeds = np.clip(cmd_rotor_speeds, self.rotor_speed_min, self.rotor_speed_max) 
 
         # Form autonomous ODE for constant inputs and integrate one time step.
         def s_dot_fn(t, s):
@@ -134,13 +164,15 @@ class Multirotor(object):
         return state_dot 
 
 
-    def step(self, state, cmd_rotor_speeds, t_step):
+    def step(self, state, control, t_step):
         """
-        Integrate dynamics forward from state given constant cmd_rotor_speeds for time t_step.
+        Integrate dynamics forward from state given constant control for time t_step.
         """
 
+        cmd_rotor_speeds = self.get_cmd_motor_speeds(state, control)
+
         # The true motor speeds can not fall below min and max speeds.
-        cmd_rotor_speeds = np.clip(cmd_rotor_speeds, self.rotor_speed_min, self.rotor_speed_max)
+        cmd_rotor_speeds = np.clip(cmd_rotor_speeds, self.rotor_speed_min, self.rotor_speed_max) 
 
         # Form autonomous ODE for constant inputs and integrate one time step.
         def s_dot_fn(t, s):
@@ -255,6 +287,99 @@ class Multirotor(object):
         FtotB += D
 
         return (FtotB, MtotB)
+
+    def get_cmd_motor_speeds(self, state, control):
+        """
+        Computes the commanded motor speeds depending on the control abstraction.
+        For higher level control abstractions, we have low-level controllers that will produce motor speeds based on the higher level commmand. 
+
+        """
+
+        if self.control_abstraction == 'cmd_motor_speeds':
+            # The controller directly controls motor speeds, so command that. 
+            return control['cmd_motor_speeds']
+
+        elif self.control_abstraction == 'cmd_motor_thrusts':
+            # The controller commands individual motor forces. 
+            cmd_motor_speeds = control['cmd_motor_thrusts'] / self.k_eta                        # Convert to motor speeds from thrust coefficient. 
+            return np.sign(cmd_motor_speeds) * np.sqrt(np.abs(cmd_motor_speeds))
+
+        elif self.control_abstraction == 'cmd_ctbm':
+            # The controller commands collective thrust and moment on each axis. 
+            cmd_thrust = control['cmd_thrust']
+            cmd_moment = control['cmd_moment']  
+
+        elif self.control_abstraction == 'cmd_ctbr':
+            # The controller commands collective thrust and body rates on each axis. 
+
+            cmd_thrust = control['cmd_thrust']
+
+            # First compute the error between the desired body rates and the actual body rates given by state. 
+            w_err = state['w'] - control['cmd_w']
+
+            # Computed commanded moment based on the attitude error and body rate error
+            wdot_cmd = -self.k_w*w_err
+            cmd_moment = self.inertia@wdot_cmd
+
+            # Now proceed with the cmd_ctbm formulation.
+
+        elif self.control_abstraction == 'cmd_vel':
+            # The controller commands a velocity vector. 
+            
+            # Get the error in the current velocity. 
+            v_err = state['v'] - control['cmd_v']
+
+            # Get desired acceleration based on P control of velocity error. 
+            a_cmd = -self.k_v*v_err
+
+            # Get desired force from this acceleration. 
+            F_des = self.mass*(a_cmd + np.array([0, 0, self.g]))
+
+            R = Rotation.from_quat(state['q']).as_matrix()
+            b3 = R @ np.array([0, 0, 1])
+            cmd_thrust = np.dot(F_des, b3)
+
+            # Follow rest of SE3 controller to compute cmd moment. 
+
+            # Desired orientation to obtain force vector.
+            b3_des = F_des/np.linalg.norm(F_des)
+            c1_des = np.array([1, 0, 0])
+            b2_des = np.cross(b3_des, c1_des)/np.linalg.norm(np.cross(b3_des, c1_des))
+            b1_des = np.cross(b2_des, b3_des)
+            R_des = np.stack([b1_des, b2_des, b3_des]).T
+
+            # Orientation error.
+            S_err = 0.5 * (R_des.T @ R - R.T @ R_des)
+            att_err = np.array([-S_err[1,2], S_err[0,2], -S_err[0,1]])
+
+            # Angular control; vector units of N*m.
+            cmd_moment = self.inertia @ (-self.kp_att*att_err - self.kd_att*state['w']) + np.cross(state['w'], self.inertia@state['w'])
+
+        elif self.control_abstraction == 'cmd_ctatt':
+            # The controller commands the collective thrust and attitude.
+
+            cmd_thrust = control['cmd_thrust']
+
+            # Compute the shape error from the current attitude and the desired attitude. 
+            R = Rotation.from_quat(state['q']).as_matrix()
+            R_des = Rotation.from_quat(control['cmd_q']).as_matrix()
+
+            S_err = 0.5 * (R_des.T @ R - R.T @ R_des)
+            att_err = np.array([-S_err[1,2], S_err[0,2], -S_err[0,1]])
+
+            # Compute command moment based on attitude error. 
+            cmd_moment = self.inertia @ (-self.kp_att*att_err - self.kd_att*state['w']) + np.cross(state['w'], self.inertia@state['w'])
+            
+        else:
+            raise ValueError("Invalid control abstraction selected. Options are: cmd_motor_speeds, cmd_motor_thrusts, cmd_ctbm, cmd_ctbr, cmd_ctatt, cmd_vel")
+
+        # Take the commanded thrust and body moments and convert them to motor speeds
+        TM = np.concatenate(([cmd_thrust], cmd_moment))               # Concatenate thrust and moment into an array
+        cmd_motor_forces = self.TM_to_f @ TM                                                # Convert to cmd_motor_forces from allocation matrix
+        cmd_motor_speeds = cmd_motor_forces / self.k_eta                                    # Convert to motor speeds from thrust coefficient. 
+        cmd_motor_speeds = np.sign(cmd_motor_speeds) * np.sqrt(np.abs(cmd_motor_speeds))
+
+        return cmd_motor_speeds
 
     @classmethod
     def rotate_k(cls, q):

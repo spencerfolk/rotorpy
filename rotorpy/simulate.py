@@ -98,7 +98,7 @@ def simulate(world, initial_state, vehicle, controller, trajectory, wind_profile
         control = [sanitize_control_dic(controller.update(time[-1], mocap_measurements[-1], flat[-1]))]
     else:
         control = [sanitize_control_dic(controller.update(time[-1], state[-1], flat[-1]))]
-    state_dot =  vehicle.statedot(state[0], control[0]['cmd_motor_speeds'], t_step)
+    state_dot =  vehicle.statedot(state[0], control[0], t_step)
     imu_measurements.append(imu.measurement(state[-1], state_dot, with_noise=True))
     imu_gt.append(imu.measurement(state[-1], state_dot, with_noise=False))
     state_estimate.append(estimator.step(state[0], control[0], imu_measurements[0], mocap_measurements[0]))
@@ -113,7 +113,7 @@ def simulate(world, initial_state, vehicle, controller, trajectory, wind_profile
             break
         time.append(time[-1] + t_step)
         state[-1]['wind'] = wind_profile.update(time[-1], state[-1]['x'])
-        state.append(vehicle.step(state[-1], control[-1]['cmd_motor_speeds'], t_step))
+        state.append(vehicle.step(state[-1], control[-1], t_step))
         flat.append(sanitize_trajectory_dic(trajectory.update(time[-1])))
         mocap_measurements.append(mocap.measurement(state[-1], with_noise=True, with_artifacts=mocap.with_artifacts))
         state_estimate.append(estimator.step(state[-1], control[-1], imu_measurements[-1], mocap_measurements[-1]))
@@ -121,7 +121,7 @@ def simulate(world, initial_state, vehicle, controller, trajectory, wind_profile
             control.append(sanitize_control_dic(controller.update(time[-1], mocap_measurements[-1], flat[-1])))
         else:
             control.append(sanitize_control_dic(controller.update(time[-1], state[-1], flat[-1])))
-        state_dot = vehicle.statedot(state[-1], control[-1]['cmd_motor_speeds'], t_step)
+        state_dot = vehicle.statedot(state[-1], control[-1], t_step)
         imu_measurements.append(imu.measurement(state[-1], state_dot, with_noise=True))
         imu_gt.append(imu.measurement(state[-1], state_dot, with_noise=False))
 
