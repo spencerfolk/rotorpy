@@ -233,7 +233,6 @@ class OccupancyMap:
 
 if __name__ == "__main__":
 
-    from axes3ds import Axes3Ds
     import matplotlib.pyplot as plt
 
     import os
@@ -245,7 +244,7 @@ if __name__ == "__main__":
 
     # Create a figure
     fig = plt.figure()
-    ax = Axes3Ds(fig)
+    ax = fig.add_subplot(projection='3d')
     # Draw the world
     world.draw(ax)
 

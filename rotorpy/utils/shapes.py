@@ -14,6 +14,58 @@ from mpl_toolkits.mplot3d import art3d
 import matplotlib.colors as mcolors
 from scipy.spatial.transform import Rotation
 
+"""
+Necessary functions for visualization 
+From original mplot3d version by John Porter (Created: 23 Sep 2005)
+
+Parts fixed by Reinier Heeres <reinier@heeres.eu>
+Minor additions by Ben Axelrod <baxelrod@coroware.com>
+Significant updates and revisions by Ben Root <ben.v.root@gmail.com>
+
+Current as of matplotlib v3.2.2 but changed at some point.
+Modified by Spencer Folk
+"""
+
+def _generate_normals(polygons):
+    '''
+    Generate normals for polygons by using the first three points.
+    This normal of course might not make sense for polygons with
+    more than three points not lying in a plane.
+    '''
+
+    normals = []
+    for verts in polygons:
+        v1 = np.array(verts[0]) - np.array(verts[1])
+        v2 = np.array(verts[2]) - np.array(verts[0])
+        normals.append(np.cross(v1, v2))
+    return normals
+
+def _shade_colors(color, normals):
+    '''
+    Shade *color* using normal vectors given by *normals*.
+    *color* can also be an array of the same length as *normals*.
+    '''
+
+    shade = np.array([np.dot(n / np.linalg.norm(n), [-1, -1, 0.5])
+                        if np.linalg.norm(n) else np.nan
+                        for n in normals])
+    mask = ~np.isnan(shade)
+
+    if len(shade[mask]) > 0:
+        norm = mcolors.Normalize(min(shade[mask]), max(shade[mask]))
+        shade[~mask] = min(shade[mask])
+        color = mcolors.to_rgba_array(color)
+        # shape of color should be (M, 4) (where M is number of faces)
+        # shape of shade should be (M,)
+        # colors should have final shape of (M, 4)
+        alpha = color[:, 3]
+        colors = (0.5 + norm(shade)[:, np.newaxis] * 0.5) * color
+        colors[:, 3] = alpha
+    else:
+        colors = np.asanyarray(color).copy()
+
+    return colors
+
 class Face():
 
     def __init__(self, ax, corners, *,
@@ -45,7 +97,7 @@ class Face():
 
         # Precompute verticies and normal vectors in reference configuration.
         self.verts = np.reshape(corners, (1, -1, 3))
-        self.normals = np.asarray(self.ax._generate_normals(self.verts))
+        self.normals = np.asarray(_generate_normals(self.verts))
 
         # Instantiate and add collection.
         self.polyc = art3d.Poly3DCollection(self.verts, linewidth=linewidth, antialiased=antialiased, alpha=alpha, edgecolors=edgecolors, facecolors=self.facecolors)
@@ -65,7 +117,7 @@ class Face():
 
         if self.shade:
             normals = np.matmul(rotation, self.normals.T).T
-            colset = self.ax._shade_colors(self.facecolors, normals)
+            colset = _shade_colors(self.facecolors, normals)
         else:
             colset = self.facecolors
         self.polyc.set_facecolors(colset)
@@ -103,7 +155,7 @@ class Cuboid():
 
         # Precompute verticies and normal vectors in reference configuration.
         self.verts = self.build_verts(x_span, y_span, z_span)
-        self.normals = np.asarray(self.ax._generate_normals(self.verts))
+        self.normals = np.asarray(_generate_normals(self.verts))
 
         # Instantiate and add collection.
         self.polyc = art3d.Poly3DCollection(self.verts, linewidth=linewidth, antialiased=antialiased, alpha=alpha, edgecolors=edgecolors, facecolors=self.facecolors)
@@ -123,7 +175,7 @@ class Cuboid():
 
         if self.shade:
             normals = np.matmul(rotation, self.normals.T).T
-            colset = self.ax._shade_colors(self.facecolors, normals)
+            colset = _shade_colors(self.facecolors, normals)
         else:
             colset = self.facecolors
         self.polyc.set_facecolors(colset)
@@ -181,7 +233,7 @@ class Cylinder():
 
         # Precompute verticies and normal vectors in reference configuration.
         self.verts = self.build_verts(radius, height, n_pts)
-        self.normals = np.asarray(self.ax._generate_normals(self.verts))
+        self.normals = np.asarray(_generate_normals(self.verts))
 
         # Instantiate and add collection.
         self.polyc = art3d.Poly3DCollection(self.verts, color='b', linewidth=0, antialiased=False)
@@ -200,7 +252,7 @@ class Cylinder():
 
         if self.shade:
             normals = np.matmul(rotation, self.normals.T).T
-            colset = self.ax._shade_colors(self.color, normals)
+            colset = _shade_colors(self.color, normals)
         else:
             colset = self.color
         self.polyc.set_facecolors(colset)
@@ -311,12 +363,11 @@ class Quadrotor():
             self.wind_vector = [self.ax.quiver(position[0], position[1], position[2], wind[0], wind[1], wind[2], color='r', linewidth=1.5)]
 
 if __name__ == '__main__':
-    from axes3ds import Axes3Ds
     import matplotlib.pyplot as plt
 
     # Test Face
     fig = plt.figure(num=4, clear=True)
-    ax = Axes3Ds(fig)
+    ax = fig.add_subplot(projection='3d')
     corners = np.array([(1,1,1), (-1,1,1), (-1,-1,1), (1,-1,1)])
     z_plus_face = Face(ax, corners=corners, facecolors='b')
     x_plus_face = Face(ax, corners=corners, facecolors='r')
@@ -336,7 +387,7 @@ if __name__ == '__main__':
 
     # Test Cuboid
     fig = plt.figure(num=0, clear=True)
-    ax = Axes3Ds(fig)
+    ax = fig.add_subplot(projection='3d')
     cuboid = Cuboid(ax, x_span=1, y_span=1, z_span=1)
     cuboid.transform(position=np.array([[0, 0, 0]]), rotation=np.identity(3))
     rotation = Rotation.from_rotvec(np.pi/4 * np.array([1, 0, 0])).as_matrix()
@@ -348,7 +399,7 @@ if __name__ == '__main__':
 
     # Test Cylinder
     fig = plt.figure(num=1, clear=True)
-    ax = Axes3Ds(fig)
+    ax = fig.add_subplot(projection='3d')
     cylinder = Cylinder(ax, radius=0.2, height=0.2)
     cylinder.transform(position=np.array([[0, 0, 0]]), rotation=np.identity(3))
     rotation = Rotation.from_rotvec(np.pi/4 * np.array([1, 0, 0])).as_matrix()
@@ -360,7 +411,7 @@ if __name__ == '__main__':
 
     # Test Quadrotor
     fig = plt.figure(num=2, clear=True)
-    ax = Axes3Ds(fig)
+    ax = fig.add_subplot(projection='3d')
     quad = Quadrotor(ax)
     quad.transform(position=np.array([[0.5, 0.5, 0.5]]), rotation=np.identity(3))
     quad = Quadrotor(ax)
@@ -372,7 +423,7 @@ if __name__ == '__main__':
 
     # Test Cuboid coloring.
     fig = plt.figure(num=3, clear=True)
-    ax = Axes3Ds(fig)
+    ax = fig.add_subplot(projection='3d')
     ax.set_xlim(-3.25,3.25)
     ax.set_ylim(-3.25,3.25)
     ax.set_zlim(-3.25,3.25)

@@ -11,7 +11,6 @@ from matplotlib.animation import FuncAnimation
 import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation
 
-from rotorpy.utils.axes3ds import Axes3Ds
 from rotorpy.utils.shapes import Quadrotor
 
 import os
@@ -94,12 +93,9 @@ def animate(time, position, rotation, wind, animate_wind, world, filename=None, 
     else:
         fig = plt.figure('Animation')
     fig.clear()
-    ax = Axes3Ds(fig)
+    ax = fig.add_subplot(projection='3d')
     if not show_axes:
         ax.set_axis_off()
-    ax.set_xlim(-1,1)
-    ax.set_ylim(-1,1)
-    ax.set_zlim(-1,1)
 
     quad = Quadrotor(ax, wind=animate_wind)
 
@@ -114,7 +110,7 @@ def animate(time, position, rotation, wind, animate_wind, world, filename=None, 
     def update(frame):
         title_artist.set_text('t = {:.2f}'.format(time[frame]))
         quad.transform(position=position[frame,:], rotation=rotation[frame,:,:], wind=wind[frame,:])
-        [a.do_3d_projection(fig.canvas.get_renderer()) for a in quad.artists]
+        # [a.do_3d_projection(fig.canvas.get_renderer()) for a in quad.artists]   # No longer necessary in newer matplotlib?
         return world_artists + list(quad.artists) + [title_artist]
 
     ani = ClosingFuncAnimation(fig=fig,

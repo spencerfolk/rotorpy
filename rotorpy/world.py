@@ -289,7 +289,6 @@ if __name__ == '__main__':
     import argparse
     from pathlib import Path
     import matplotlib.pyplot as plt
-    from rotorpy.axes3ds import Axes3Ds
 
     parser = argparse.ArgumentParser(description='Display a map file in a Matplotlib window.')
     parser.add_argument('filename', help="Filename for map file json.")
@@ -299,7 +298,7 @@ if __name__ == '__main__':
     world = World.from_file(file)
 
     fig = plt.figure(f"{file.name}")
-    ax = Axes3Ds(fig)
+    ax = fig.add_subplot(projection='3d')
     world.draw(ax)
 
     plt.show()

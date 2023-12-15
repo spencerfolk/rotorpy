@@ -2,7 +2,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 import matplotlib.pyplot as plt
 
-from rotorpy.utils.axes3ds import Axes3Ds
+# from rotorpy.utils.axes3ds import Axes3Ds
 from rotorpy.utils.animate import animate
 
 import os
@@ -38,7 +38,8 @@ class Plotter():
 
         # 3D Paths
         fig = plt.figure('3D Path')
-        ax = Axes3Ds(fig)
+        # ax = Axes3Ds(fig)
+        ax = fig.add_subplot(projection='3d')
         self.world.draw(ax)
         ax.plot3D(self.x[:,0], self.x[:,1], self.x[:,2], 'b.')
         ax.plot3D(self.x_des[:,0], self.x_des[:,1], self.x_des[:,2], 'k')
