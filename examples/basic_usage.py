@@ -97,7 +97,7 @@ results = sim_instance.run(t_final      = 20,       # The maximum duration of th
                            plot_estimator  = True,     # Boolean: plots the estimator filter states and covariance diagonal elements
                            plot_imu        = True,     # Boolean: plots the IMU measurements
                            animate_bool    = True,     # Boolean: determines if the animation of vehicle state will play. 
-                           animate_wind    = False,    # Boolean: determines if the animation will include a scaled wind vector to indicate the local wind acting on the UAV. 
+                           animate_wind    = True,    # Boolean: determines if the animation will include a scaled wind vector to indicate the local wind acting on the UAV. 
                            verbose         = True,     # Boolean: will print statistics regarding the simulation. 
                            fname   = None # Filename is specified if you want to save the animation. The save location is rotorpy/data_out/. 
                     )
