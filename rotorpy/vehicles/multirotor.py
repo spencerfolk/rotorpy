@@ -40,10 +40,11 @@ class Multirotor(object):
         quad_params: a dictionary containing relevant physical parameters for the multirotor. 
         initial_state: the initial state of the vehicle. 
         control_abstraction: the appropriate control abstraction that is used by the controller, options are...
-                                'cmd_motor_speed': the controller directly commands motor speeds. 
-                                'cmd_motor_force': the controller commands forces for each rotor.
+                                'cmd_motor_speeds': the controller directly commands motor speeds. 
+                                'cmd_motor_thrusts': the controller commands forces for each rotor.
                                 'cmd_ctbr': the controller commands a collective thrsut and body rates. 
                                 'cmd_ctbm': the controller commands a collective thrust and moments on the x/y/z body axes
+                                'cmd_ctatt': the controller commands a collective thrust and attitude (as a quaternion).
                                 'cmd_vel': the controller commands a velocity vector in the body frame. 
     """
     def __init__(self, quad_params, initial_state = {'x': np.array([0,0,0]),
