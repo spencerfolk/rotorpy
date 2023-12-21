@@ -19,5 +19,5 @@ setup(
             'pandas',
             'ndsplines',
             'timeout_decorator',
-            'tqdm',
+            'tqdm'
             'gymnasium'])
