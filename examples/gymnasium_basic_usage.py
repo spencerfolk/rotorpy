@@ -14,7 +14,6 @@ from rotorpy.learning.quadrotor_environments import QuadrotorEnv
 # Reward functions can be specified by the user, or we can import from existing reward functions.
 from rotorpy.learning.quadrotor_reward_functions import hover_reward
 
-
 # First, we need to make the gym environment. The inputs to the model are as follows...
 """
 Inputs:
@@ -54,9 +53,13 @@ observation, info = env.reset(initial_state='random')
 T = 300
 time = np.arange(T)*(1/100)      # Just for plotting purposes.
 position = np.zeros((T, 3))      # Just for plotting purposes. 
-velocity = np.zeros((T, 3))
+velocity = np.zeros((T, 3))      # Just for plotting purposes.
+reward_sum = np.zeros((T,))      # Just for plotting purposes.
+actions = np.zeros((T, 4))       # Just for plotting purposes.
 
 for i in range(T):
+
+    ##### Below is just code for computing the action via the SE3 controller and converting it to an action [-1,1]
 
     # Unpack the observation from the environment
     state = {'x': observation[0:3], 'v': observation[3:6], 'q': observation[6:10], 'w': observation[10:13], 'wind': observation[13:16], 'rotor_speeds': observation[16:20]}
@@ -77,18 +80,26 @@ for i in range(T):
     # The environment expects the control inputs to all be within the range [-1,1]
     action = np.interp(cmd_motor_speeds, [env.unwrapped.rotor_speed_min, env.unwrapped.rotor_speed_max], [-1,1])
 
+    ###### Alternatively, we could just randomly sample the action space. 
+#     action = np.random.uniform(low=-1, high=1, size=(4,))
+
     # Step forward in the environment
     observation, reward, terminated, truncated, info = env.step(action)
 
     # For plotting, save the relevant information
     position[i, :] = observation[0:3]
     velocity[i, :] = observation[3:6]
+    if i == 0:
+        reward_sum[i] = reward
+    else:
+        reward_sum[i] = reward_sum[i-1] + reward
+    actions[i, :] = action
 
 env.close()
 
 # Plotting
 
-(fig, axes) = plt.subplots(nrows=2, ncols=1, num='Position vs Time')
+(fig, axes) = plt.subplots(nrows=2, ncols=1, num='Quadrotor State')
 ax = axes[0]
 ax.plot(time, position[:, 0], 'r', label='X')
 ax.plot(time, position[:, 1], 'g', label='Y')
@@ -101,5 +112,19 @@ ax.plot(time, velocity[:, 0], 'r', label='X')
 ax.plot(time, velocity[:, 1], 'g', label='Y')
 ax.plot(time, velocity[:, 2], 'b', label='Z')
 ax.set_xlabel("Time, s")
+
+(fig, axes) = plt.subplots(nrows=2, ncols=1, num="Action and Reward")
+ax = axes[0]
+ax.plot(time, actions[:, 0], 'r', label='action 1')
+ax.plot(time, actions[:, 1], 'g', label='action 2')
+ax.plot(time, actions[:, 2], 'b', label='action 3')
+ax.plot(time, actions[:, 3], 'm', label='action 4')
+ax.set_ylabel("Action")
+ax.legend()
+
+ax = axes[1]
+ax.plot(time, reward_sum, 'k')
+ax.set_xlabel("Time, s")
+ax.set_ylabel("Reward Sum")
 
 plt.show()
