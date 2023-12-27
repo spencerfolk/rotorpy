@@ -96,7 +96,7 @@ class QuadrotorEnv(gym.Env):
         # For generalizability, we assume the controller outputs 4 numbers between -1 and 1. Depending on the control mode, we scale these appropriately. 
         
         if self.control_mode == 'cmd_vel':
-            self.action_space = spaces.Box(low = -1, high = -1, shape = (4,), dtype=np.float32)
+            self.action_space = spaces.Box(low = -1, high = 1, shape = (3,), dtype=np.float32)
         else:
             self.action_space = spaces.Box(low = -1, high = 1, shape = (4,), dtype=np.float32)
 
