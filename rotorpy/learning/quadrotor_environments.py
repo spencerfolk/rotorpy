@@ -90,7 +90,7 @@ class QuadrotorEnv(gym.Env):
         #     motor_speeds, rotor_speeds, observation_state[16:20]
         # For simplicitly, we assume these observations can lie within -inf to inf. 
 
-        self.observation_space = spaces.Box(low = -np.inf, high=np.inf, shape = (20,), dtype=np.float32)
+        self.observation_space = spaces.Box(low = -np.inf, high=np.inf, shape = (13,), dtype=np.float32)
         
         ############ ACTION SPACE
 
@@ -391,7 +391,7 @@ class QuadrotorEnv(gym.Env):
     
     def _get_obs(self):
         # Concatenate all the state variables into a single vector
-        state_vec = np.concatenate([self.vehicle_state['x'], self.vehicle_state['v'], self.vehicle_state['q'], self.vehicle_state['w'], self.vehicle_state['wind'], self.vehicle_state['rotor_speeds']], dtype=np.float32)
+        state_vec = np.concatenate([self.vehicle_state['x'], self.vehicle_state['v'], self.vehicle_state['q'], self.vehicle_state['w']], dtype=np.float32)
 
         return state_vec
     
