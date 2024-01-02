@@ -74,9 +74,9 @@ epoch_count = 0
 while True:  # Run indefinitely..
 
     # This line will run num_timesteps for training and log the results every so often.
-    model.learn(total_timesteps=num_timesteps, reset_num_timesteps=False, tb_log_name="PPO-Quad"+start_time.strftime('%H-%M-%S'))
+    model.learn(total_timesteps=num_timesteps, reset_num_timesteps=False, tb_log_name="PPO-Quad_"+start_time.strftime('%H-%M-%S'))
 
     # Save the model
-    model.save(f"{models_dir}/PPO_hover_{num_timesteps*(epoch_count+1)}")
+    model.save(f"{models_dir}/PPO_hover_policy_{num_timesteps*(epoch_count+1)}")
 
     epoch_count += 1
