@@ -33,7 +33,9 @@ class QuadrotorEnv(gym.Env):
         max_time: the maximum time of the session. After this time, the session will exit. 
         world: the world for the quadrotor to operate within. 
         sim_rate: the simulation rate (in Hz), i.e. the timestep. 
+        aero: boolean, determines whether or not aerodynamic wrenches are computed. 
         render_mode: render the quadrotor.
+        ax: for plotting purposes, you can supply an axis object that the quadrotor will visualize on. 
     """
 
     metadata = {"render_modes": ["None", "3D", "console"], 
@@ -54,7 +56,8 @@ class QuadrotorEnv(gym.Env):
                  wind_profile = None,         # wind profile object, if none is supplied it will choose no wind. 
                  world        = None,         # The world object
                  sim_rate = 100,              # The update frequency of the simulator in Hz
-                 render_mode = "None",          # The rendering mode
+                 aero = True,                 # Whether or not aerodynamic wrenches are computed.
+                 render_mode = "None",        # The rendering mode
                  ax = None,
                 ):
         super(QuadrotorEnv, self).__init__()
@@ -71,7 +74,7 @@ class QuadrotorEnv(gym.Env):
         self.reward_fn = reward_fn
 
         # Create quadrotor from quad params and control abstraction. 
-        self.quadrotor = Multirotor(quad_params=quad_params, initial_state=initial_state, control_abstraction=control_mode)
+        self.quadrotor = Multirotor(quad_params=quad_params, initial_state=initial_state, control_abstraction=control_mode, aero=aero)
 
         assert render_mode is None or render_mode in self.metadata["render_modes"]
         self.render_mode = render_mode
@@ -127,11 +130,6 @@ class QuadrotorEnv(gym.Env):
 
         # Save the order of magnitude of the rotor speeds for later normalization
         self.rotor_speed_order_mag = math.floor(math.log(self.quadrotor.rotor_speed_max, 10))
-
-        # # You may define any additional constants you like including control gains.
-        # self.inertia = np.array([[self.quadrotor.Ixx, self.quadrotor.Ixy, self.quadrotor.Ixz],
-        #                          [self.quadrotor.Ixy, self.quadrotor.Iyy, self.quadrotor.Iyz],
-        #                          [self.quadrotor.Ixz, self.quadrotor.Iyz, self.quadrotor.Izz]]) # kg*m^2
 
         if world is None:
             # If no world is specified, assume that it means that the intended world is free space.
