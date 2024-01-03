@@ -35,6 +35,7 @@ class QuadrotorEnv(gym.Env):
         sim_rate: the simulation rate (in Hz), i.e. the timestep. 
         aero: boolean, determines whether or not aerodynamic wrenches are computed. 
         render_mode: render the quadrotor.
+        render_fps: rendering frames per second, lower this for faster visualization. 
         ax: for plotting purposes, you can supply an axis object that the quadrotor will visualize on. 
     """
 
@@ -58,9 +59,12 @@ class QuadrotorEnv(gym.Env):
                  sim_rate = 100,              # The update frequency of the simulator in Hz
                  aero = True,                 # Whether or not aerodynamic wrenches are computed.
                  render_mode = "None",        # The rendering mode
+                 render_fps = 30,             # The rendering frames per second. Lower this for faster visualization. 
                  ax = None,
                 ):
         super(QuadrotorEnv, self).__init__()
+
+        self.metadata['render_fps'] = render_fps
 
         self.initial_state = initial_state
 
@@ -398,17 +402,21 @@ class QuadrotorEnv(gym.Env):
 
     def _plot_quad(self):
 
+        if abs(self.t / (1/self.metadata['render_fps']) - round(self.t / (1/self.metadata['render_fps']))) > 1e-2:
+            return
+        
         plot_position = deepcopy(self.vehicle_state['x'])
         plot_rotation = Rotation.from_quat(self.vehicle_state['q']).as_matrix()
         plot_wind = deepcopy(self.vehicle_state['wind'])
 
         if self.world_artists is None:
             self.world_artists = self.world.draw(self.ax)
+            self.ax.plot(0, 0, 0, 'go')
 
         self.quad_obj.transform(position=plot_position, rotation=plot_rotation, wind=plot_wind)
         self.title_artist.set_text('t = {:.2f}'.format(self.t))
 
-        plt.pause(0.0001)
+        plt.pause(1e-9)
 
         return 
     
