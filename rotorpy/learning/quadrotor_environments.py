@@ -38,6 +38,7 @@ class QuadrotorEnv(gym.Env):
         render_mode: render the quadrotor.
         render_fps: rendering frames per second, lower this for faster visualization. 
         ax: for plotting purposes, you can supply an axis object that the quadrotor will visualize on. 
+        color: choose the color of the quadrotor. If none, it will randomly select a color.
     """
 
     metadata = {"render_modes": ["None", "3D", "console"], 
@@ -63,6 +64,7 @@ class QuadrotorEnv(gym.Env):
                  render_fps = 30,             # The rendering frames per second. Lower this for faster visualization. 
                  fig = None,                  # Figure for rendering. Optional. 
                  ax = None,                   # Axis for rendering. Optional. 
+                 color = None,                # The color of the quadrotor. 
                 ):
         super(QuadrotorEnv, self).__init__()
 
@@ -159,7 +161,10 @@ class QuadrotorEnv(gym.Env):
             else:
                 self.fig = fig
                 self.ax = ax
-            colors = list(mcolors.CSS4_COLORS)
+            if color is None:
+                colors = list(mcolors.CSS4_COLORS)
+            else:
+                colors = [color]
             self.quad_obj = Quadrotor(self.ax, wind=True, color=np.random.choice(colors))
             self.world_artists = None
             self.title_artist = self.ax.set_title('t = {}'.format(self.t))
