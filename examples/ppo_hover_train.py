@@ -47,7 +47,7 @@ reward_function = lambda obs, act: hover_reward(obs, act, weights={'x': 1, 'v': 
 # Make the environment. For this demo we'll train a policy to command collective thrust and body rates.
 # Turning render_mode="None" will make the training run much faster, as visualization is a current bottleneck. 
 env = gym.make("Quadrotor-v0", 
-                control_mode ='cmd_ctbr', 
+                control_mode ='cmd_motor_speeds', 
                 reward_fn = reward_function,
                 quad_params = quad_params,
                 max_time = 5,
@@ -74,7 +74,7 @@ epoch_count = 0
 while True:  # Run indefinitely..
 
     # This line will run num_timesteps for training and log the results every so often.
-    model.learn(total_timesteps=num_timesteps, reset_num_timesteps=False, tb_log_name="PPO-Quad_"+start_time.strftime('%H-%M-%S'))
+    model.learn(total_timesteps=num_timesteps, reset_num_timesteps=False, tb_log_name="PPO-Quad_cmd-motor_"+start_time.strftime('%H-%M-%S'))
 
     # Save the model
     model.save(f"{models_dir}/PPO/{start_time.strftime('%H-%M-%S')}/hover_{num_timesteps*(epoch_count+1)}")
