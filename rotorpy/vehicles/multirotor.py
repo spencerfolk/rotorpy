@@ -4,6 +4,8 @@ import scipy.integrate
 from scipy.spatial.transform import Rotation
 from rotorpy.vehicles.hummingbird_params import quad_params
 
+import time
+
 """
 Multirotor models
 """
@@ -40,11 +42,13 @@ class Multirotor(object):
         quad_params: a dictionary containing relevant physical parameters for the multirotor. 
         initial_state: the initial state of the vehicle. 
         control_abstraction: the appropriate control abstraction that is used by the controller, options are...
-                                'cmd_motor_speed': the controller directly commands motor speeds. 
-                                'cmd_motor_force': the controller commands forces for each rotor.
+                                'cmd_motor_speeds': the controller directly commands motor speeds. 
+                                'cmd_motor_thrusts': the controller commands forces for each rotor.
                                 'cmd_ctbr': the controller commands a collective thrsut and body rates. 
                                 'cmd_ctbm': the controller commands a collective thrust and moments on the x/y/z body axes
+                                'cmd_ctatt': the controller commands a collective thrust and attitude (as a quaternion).
                                 'cmd_vel': the controller commands a velocity vector in the body frame. 
+        aero: boolean, determines whether or not aerodynamic drag forces are computed. 
     """
     def __init__(self, quad_params, initial_state = {'x': np.array([0,0,0]),
                                             'v': np.zeros(3,),
@@ -53,6 +57,7 @@ class Multirotor(object):
                                             'wind': np.array([0,0,0]),  # Since wind is handled elsewhere, this value is overwritten
                                             'rotor_speeds': np.array([1788.53, 1788.53, 1788.53, 1788.53])},
                        control_abstraction='cmd_motor_speeds',
+                       aero = True,  
                 ):
         """
         Initialize quadrotor physical parameters.
@@ -125,6 +130,8 @@ class Multirotor(object):
         self.k_v = 10               # The *world* velocity P gain (for cmd_vel)
         self.kp_att = 544           # The attitude P gain (for cmd_vel and cmd_ctatt)
         self.kd_att = 46.64         # The attitude D gain (for cmd_vel and cmd_ctatt)
+
+        self.aero = aero
 
     def extract_geometry(self):
         """
@@ -209,9 +216,6 @@ class Multirotor(object):
 
         R = Rotation.from_quat(state['q']).as_matrix()
 
-        # Compute airspeed vector in the body frame
-        body_airspeed_vector = R.T@(inertial_velocity - wind_velocity)
-
         # Rotor speed derivative
         rotor_accel = (1/self.tau_m)*(cmd_rotor_speeds - rotor_speeds)
 
@@ -221,8 +225,11 @@ class Multirotor(object):
         # Orientation derivative.
         q_dot = quat_dot(state['q'], state['w'])
 
+        # Compute airspeed vector in the body frame
+        body_airspeed_vector = R.T@(inertial_velocity - wind_velocity)
+
         # Compute total wrench in the body frame based on the current rotor speeds and their location w.r.t. CoM
-        (FtotB, Mtot) = self.compute_body_wrench(state['w'], rotor_speeds, body_airspeed_vector)
+        (FtotB, MtotB) = self.compute_body_wrench(state['w'], rotor_speeds, body_airspeed_vector)
 
         # Rotate the force from the body frame to the inertial frame
         Ftot = R@FtotB
@@ -233,7 +240,7 @@ class Multirotor(object):
         # Angular velocity derivative.
         w = state['w']
         w_hat = Multirotor.hat_map(w)
-        w_dot = self.inv_inertia @ (Mtot - w_hat @ (self.inertia @ w))
+        w_dot = self.inv_inertia @ (MtotB - w_hat @ (self.inertia @ w))
 
         # NOTE: the wind dynamics are currently handled in the wind_profile object. 
         # The line below doesn't do anything, as the wind state is assigned elsewhere. 
@@ -259,32 +266,32 @@ class Multirotor(object):
         The net moment Mtot is represented in the body frame. 
         """
 
-        FtotB = np.zeros((3,))
-        MtotB = np.zeros((3,))
+        # Get the local airspeeds for each rotor
+        local_airspeeds = body_airspeed_vector[:, np.newaxis] + Multirotor.hat_map(body_rates)@(self.rotor_geometry.T) 
 
-        for i in range(self.num_rotors):
-            # Loop through each rotor, compute the forces 
+        # Compute the thrust of each rotor, assuming that the rotors all point in the body z direction!
+        T = np.array([0, 0, self.k_eta])[:, np.newaxis]*rotor_speeds**2
+        
+        # Add in aero wrenches (if applicable)
+        if self.aero:
+            # Parasitic drag force acting at the CoM
+            D = -Multirotor._norm(body_airspeed_vector)*self.drag_matrix@body_airspeed_vector
+            # Rotor drag (aka H force) acting at each propeller hub.
+            H = -rotor_speeds*(self.rotor_drag_matrix@local_airspeeds)
+            # Pitching flapping moment acting at each propeller hub.
+            M_flap = -self.k_flap*rotor_speeds*((Multirotor.hat_map(local_airspeeds.T).transpose(2, 0, 1))@np.array([0,0,1])).T
+        else:
+            D = np.zeros(3,)
+            H = np.zeros((3,self.num_rotors))
+            M_flap = np.zeros((3,self.num_rotors))
 
-            r = self.rotor_geometry[i,:] # the position of rotor i relative to the CoM, in body coordinates
-            
-            # Compute the local airspeed by adding on the rotational component to the airspeed.
-            local_airspeed_vector = body_airspeed_vector + Multirotor.hat_map(body_rates)@r
+        # Compute the moments due to the rotor thrusts, rotor drag (if applicable), and rotor drag torques
+        M_force = -np.einsum('ijk, ik->j', Multirotor.hat_map(self.rotor_geometry), T+H)
+        M_yaw = self.rotor_dir*(np.array([0, 0, self.k_m])[:, np.newaxis]*rotor_speeds**2)
 
-            T = np.array([0, 0, self.k_eta*rotor_speeds[i]**2])             # thrust vector in body frame
-            H = -rotor_speeds[i]*self.rotor_drag_matrix@local_airspeed_vector     # rotor drag force
-
-            # Compute the moments
-            M_force = Multirotor.hat_map(r)@(T+H)
-            M_yaw = self.rotor_dir[i]*np.array([0, 0, self.k_m*rotor_speeds[i]**2]) 
-            M_flap = -rotor_speeds[i]*self.k_flap*Multirotor.hat_map(local_airspeed_vector)@np.array([0,0,1])
-
-            FtotB += (T+H)
-            MtotB += (M_force + M_yaw + M_flap)
-
-        # Compute the drag force acting on the frame
-        D = -Multirotor._norm(body_airspeed_vector)*self.drag_matrix@body_airspeed_vector
-
-        FtotB += D
+        # Sum all elements to compute the total body wrench
+        FtotB = np.sum(T + H, axis=1) + D
+        MtotB = M_force + np.sum(M_yaw + M_flap, axis=1)
 
         return (FtotB, MtotB)
 
@@ -395,10 +402,16 @@ class Multirotor(object):
     def hat_map(cls, s):
         """
         Given vector s in R^3, return associate skew symmetric matrix S in R^3x3
+        In the vectorized implementation, we assume that s is in the shape (N arrays, 3)
         """
-        return np.array([[    0, -s[2],  s[1]],
-                         [ s[2],     0, -s[0]],
-                         [-s[1],  s[0],     0]])
+        if len(s.shape) > 1:  # Vectorized implementation
+            return np.array([[ np.zeros(s.shape[0]), -s[:,2],  s[:,1]],
+                             [ s[:,2],     np.zeros(s.shape[0]), -s[:,0]],
+                             [-s[:,1],  s[:,0],     np.zeros(s.shape[0])]])
+        else:
+            return np.array([[    0, -s[2],  s[1]],
+                             [ s[2],     0, -s[0]],
+                             [-s[1],  s[0],     0]])
 
     @classmethod
     def _pack_state(cls, state):

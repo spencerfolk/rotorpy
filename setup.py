@@ -9,7 +9,7 @@ packages = list(filter(isdir, all_packages))
 setup(
     name='rotorpy',
     packages=packages,
-    version='1.0.1',
+    version='1.1.0',
     install_requires=[
             'cvxopt',
             'matplotlib',
@@ -19,4 +19,5 @@ setup(
             'pandas',
             'ndsplines',
             'timeout_decorator',
-            'tqdm'])
+            'tqdm',
+            'gymnasium'])
