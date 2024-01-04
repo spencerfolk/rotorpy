@@ -42,7 +42,8 @@ env = gym.make("Quadrotor-v0",
                 max_time = 5,
                 world = None,
                 sim_rate = 100,
-                render_mode='3D')
+                render_mode='3D',
+                render_fps=30)
 
 # Now reset the quadrotor.
 # Setting initial_state to 'random' will randomly place the vehicle in the map near the origin.
