@@ -62,7 +62,7 @@ for i in range(T):
     ##### Below is just code for computing the action via the SE3 controller and converting it to an action [-1,1]
 
     # Unpack the observation from the environment
-    state = {'x': observation[0:3], 'v': observation[3:6], 'q': observation[6:10], 'w': observation[10:13], 'wind': observation[13:16], 'rotor_speeds': observation[16:20]}
+    state = {'x': observation[0:3], 'v': observation[3:6], 'q': observation[6:10], 'w': observation[10:13]}
     
     # For illustrative purposes, just command the quad to hover.
     flat = {'x': [0, 0, 0], 
@@ -111,6 +111,7 @@ ax = axes[1]
 ax.plot(time, velocity[:, 0], 'r', label='X')
 ax.plot(time, velocity[:, 1], 'g', label='Y')
 ax.plot(time, velocity[:, 2], 'b', label='Z')
+ax.set_ylabel("Velocity, m/s")
 ax.set_xlabel("Time, s")
 
 (fig, axes) = plt.subplots(nrows=2, ncols=1, num="Action and Reward")
