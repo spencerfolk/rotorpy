@@ -291,7 +291,7 @@ class QuadrotorEnv(gym.Env):
         self.control_dict = self.rescale_action(action)
 
         # Now update the wind state using the wind profile
-        self.vehicle_state['wind'] = self.wind_profile.update(0, self.vehicle_state['x'])
+        self.vehicle_state['wind'] = self.wind_profile.update(self.t, self.vehicle_state['x'])
 
         # Last perform forward integration using the commanded motor speed and the current state
         self.vehicle_state = self.quadrotor.step(self.vehicle_state, self.control_dict, self.t_step)
