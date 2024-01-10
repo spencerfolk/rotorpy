@@ -321,10 +321,11 @@ class Quadrotor():
 
     def __init__(self, ax,
         arm_length=0.125, rotor_radius=0.08, n_rotors=4,
-        shade=True, color=None, wind=True):
+        shade=True, color=None, wind=True, wind_scale_factor=5):
 
         self.ax = ax
         self.wind_bool = wind
+        self.wind_scale_factor = wind_scale_factor
 
         # Apply same color to all rotor objects.
         if color is None:
@@ -360,7 +361,7 @@ class Quadrotor():
             r.transform(np.matmul(rotation,pos)+position, rotation)
         if self.wind_bool:
             self.wind_vector[0].remove()
-            self.wind_vector = [self.ax.quiver(position[0], position[1], position[2], wind[0], wind[1], wind[2], color='r', linewidth=1.5)]
+            self.wind_vector = [self.ax.quiver(position[0], position[1], position[2], wind[0]/self.wind_scale_factor, wind[1]/self.wind_scale_factor, wind[2]/self.wind_scale_factor, color='r', linewidth=1.5)]
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt

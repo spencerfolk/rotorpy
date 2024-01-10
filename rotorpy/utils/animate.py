@@ -97,7 +97,7 @@ def animate(time, position, rotation, wind, animate_wind, world, filename=None, 
     if not show_axes:
         ax.set_axis_off()
 
-    quad = Quadrotor(ax, wind=animate_wind)
+    quad = Quadrotor(ax, wind=animate_wind, wind_scale_factor=1)
 
     world_artists = world.draw(ax)
 

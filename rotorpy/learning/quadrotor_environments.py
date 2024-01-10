@@ -165,7 +165,7 @@ class QuadrotorEnv(gym.Env):
                 colors = list(mcolors.CSS4_COLORS)
             else:
                 colors = [color]
-            self.quad_obj = Quadrotor(self.ax, wind=True, color=np.random.choice(colors))
+            self.quad_obj = Quadrotor(self.ax, wind=True, color=np.random.choice(colors), wind_scale_factor=5)
             self.world_artists = None
             self.title_artist = self.ax.set_title('t = {}'.format(self.t))
 
