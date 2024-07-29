@@ -91,13 +91,13 @@ def simulate(world, initial_state, vehicle, controller, trajectory, wind_profile
     mocap_measurements = []
     imu_gt = []
     state_estimate = []
-    flat    = [sanitize_trajectory_dic(trajectory.update(time[-1]))]
+    flat    = [trajectory.update(time[-1])]
     mocap_measurements.append(mocap.measurement(state[-1], with_noise=True, with_artifacts=False))
     if use_mocap:
         # In this case the controller will use the motion capture estimate of the pose and twist for control. 
-        control = [sanitize_control_dic(controller.update(time[-1], mocap_measurements[-1], flat[-1]))]
+        control = [controller.update(time[-1], mocap_measurements[-1], flat[-1])]
     else:
-        control = [sanitize_control_dic(controller.update(time[-1], state[-1], flat[-1]))]
+        control = [controller.update(time[-1], state[-1], flat[-1])]
     state_dot =  vehicle.statedot(state[0], control[0], t_step)
     imu_measurements.append(imu.measurement(state[-1], state_dot, with_noise=True))
     imu_gt.append(imu.measurement(state[-1], state_dot, with_noise=False))
@@ -114,13 +114,13 @@ def simulate(world, initial_state, vehicle, controller, trajectory, wind_profile
         time.append(time[-1] + t_step)
         state[-1]['wind'] = wind_profile.update(time[-1], state[-1]['x'])
         state.append(vehicle.step(state[-1], control[-1], t_step))
-        flat.append(sanitize_trajectory_dic(trajectory.update(time[-1])))
+        flat.append(trajectory.update(time[-1]))
         mocap_measurements.append(mocap.measurement(state[-1], with_noise=True, with_artifacts=mocap.with_artifacts))
         state_estimate.append(estimator.step(state[-1], control[-1], imu_measurements[-1], mocap_measurements[-1]))
         if use_mocap:
-            control.append(sanitize_control_dic(controller.update(time[-1], mocap_measurements[-1], flat[-1])))
+            control.append(controller.update(time[-1], mocap_measurements[-1], flat[-1]))
         else:
-            control.append(sanitize_control_dic(controller.update(time[-1], state[-1], flat[-1])))
+            control.append(controller.update(time[-1], state[-1], flat[-1]))
         state_dot = vehicle.statedot(state[-1], control[-1], t_step)
         imu_measurements.append(imu.measurement(state[-1], state_dot, with_noise=True))
         imu_gt.append(imu.measurement(state[-1], state_dot, with_noise=False))
@@ -195,10 +195,6 @@ def safety_exit(world, margin, state, flat, control):
     """
     Return exit status if any safety condition is violated, otherwise None.
     """
-    if np.any(np.isinf(control['cmd_motor_speeds'])):
-        return ExitStatus.INF_VALUE
-    if np.any(np.isnan(control['cmd_motor_speeds'])):
-        return ExitStatus.NAN_VALUE
     if np.any(np.abs(state['v']) > 100):
         return ExitStatus.OVER_SPEED
     if np.any(np.abs(state['w']) > 100):
@@ -213,24 +209,3 @@ def safety_exit(world, margin, state, flat, control):
         if not no_collision:
             return ExitStatus.COLLISION
     return None
-
-def sanitize_control_dic(control_dic):
-    """
-    Return a sanitized version of the control dictionary where all of the elements are np arrays
-    """
-    control_dic['cmd_motor_speeds'] = np.asarray(control_dic['cmd_motor_speeds'], np.float64).ravel()
-    control_dic['cmd_moment'] = np.asarray(control_dic['cmd_moment'], np.float64).ravel()
-    control_dic['cmd_q'] = np.asarray(control_dic['cmd_q'], np.float64).ravel()
-    return control_dic
-
-def sanitize_trajectory_dic(trajectory_dic):
-    """
-    Return a sanitized version of the trajectory dictionary where all of the elements are np arrays
-    """
-    trajectory_dic['x'] = np.asarray(trajectory_dic['x'], np.float64).ravel()
-    trajectory_dic['x_dot'] = np.asarray(trajectory_dic['x_dot'], np.float64).ravel()
-    trajectory_dic['x_ddot'] = np.asarray(trajectory_dic['x_ddot'], np.float64).ravel()
-    trajectory_dic['x_dddot'] = np.asarray(trajectory_dic['x_dddot'], np.float64).ravel()
-    trajectory_dic['x_ddddot'] = np.asarray(trajectory_dic['x_ddddot'], np.float64).ravel()
-
-    return trajectory_dic
