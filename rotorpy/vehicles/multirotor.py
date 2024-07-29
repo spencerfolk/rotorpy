@@ -399,8 +399,6 @@ class Multirotor(object):
 
             # Angular control; vector units of N*m.
             cmd_moment = self.inertia @ (-self.kp_att*att_err - self.kd_att*state['w']) + np.cross(state['w'], self.inertia@state['w'])
-
-            print("Dumb")
         else:
             raise ValueError("Invalid control abstraction selected. Options are: cmd_motor_speeds, cmd_motor_thrusts, cmd_ctbm, cmd_ctbr, cmd_ctatt, cmd_vel")
 
