@@ -47,7 +47,8 @@ class Multirotor(object):
                                 'cmd_ctbr': the controller commands a collective thrsut and body rates. 
                                 'cmd_ctbm': the controller commands a collective thrust and moments on the x/y/z body axes
                                 'cmd_ctatt': the controller commands a collective thrust and attitude (as a quaternion).
-                                'cmd_vel': the controller commands a velocity vector in the body frame. 
+                                'cmd_vel': the controller commands a velocity vector in the world frame. 
+                                'cmd_acc': the controller commands a mass normalized thrust vector (acceleration) in the world frame.
         aero: boolean, determines whether or not aerodynamic drag forces are computed. 
     """
     def __init__(self, quad_params, initial_state = {'x': np.array([0,0,0]),
@@ -128,8 +129,8 @@ class Multirotor(object):
 
         self.k_w = 1                # The body rate P gain        (for cmd_ctbr)
         self.k_v = 10               # The *world* velocity P gain (for cmd_vel)
-        self.kp_att = 544           # The attitude P gain (for cmd_vel and cmd_ctatt)
-        self.kd_att = 46.64         # The attitude D gain (for cmd_vel and cmd_ctatt)
+        self.kp_att = 544           # The attitude P gain (for cmd_vel, cmd_acc, and cmd_ctatt)
+        self.kd_att = 46.64         # The attitude D gain (for cmd_vel, cmd_acc, and cmd_ctatt)
 
         self.aero = aero
 
@@ -376,7 +377,30 @@ class Multirotor(object):
 
             # Compute command moment based on attitude error. 
             cmd_moment = self.inertia @ (-self.kp_att*att_err - self.kd_att*state['w']) + np.cross(state['w'], self.inertia@state['w'])
-            
+        
+        elif self.control_abstraction == 'cmd_acc':
+            # The controller commands an acceleration vector (or thrust vector). This is equivalent to F_des in the SE3 controller. 
+            F_des = control['cmd_acc']*self.mass
+
+            R = Rotation.from_quat(state['q']).as_matrix()
+            b3 = R @ np.array([0, 0, 1])
+            cmd_thrust = np.dot(F_des, b3)
+
+            # Desired orientation to obtain force vector.
+            b3_des = F_des/np.linalg.norm(F_des)
+            c1_des = np.array([1, 0, 0])
+            b2_des = np.cross(b3_des, c1_des)/np.linalg.norm(np.cross(b3_des, c1_des))
+            b1_des = np.cross(b2_des, b3_des)
+            R_des = np.stack([b1_des, b2_des, b3_des]).T
+
+            # Orientation error.
+            S_err = 0.5 * (R_des.T @ R - R.T @ R_des)
+            att_err = np.array([-S_err[1,2], S_err[0,2], -S_err[0,1]])
+
+            # Angular control; vector units of N*m.
+            cmd_moment = self.inertia @ (-self.kp_att*att_err - self.kd_att*state['w']) + np.cross(state['w'], self.inertia@state['w'])
+
+            print("Dumb")
         else:
             raise ValueError("Invalid control abstraction selected. Options are: cmd_motor_speeds, cmd_motor_thrusts, cmd_ctbm, cmd_ctbr, cmd_ctatt, cmd_vel")
 

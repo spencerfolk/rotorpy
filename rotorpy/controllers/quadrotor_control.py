@@ -3,6 +3,7 @@ from scipy.spatial.transform import Rotation
 
 class SE3Control(object):
     """
+    Quadrotor trajectory tracking controller based on https://ieeexplore.ieee.org/document/5717652 
 
     """
     def __init__(self, quad_params):
@@ -66,97 +67,6 @@ class SE3Control(object):
                                   np.hstack([np.cross(self.rotor_pos[key],np.array([0,0,1])).reshape(-1,1)[0:2] for key in self.rotor_pos]), 
                                  (k * self.rotor_dir).reshape(1,-1)))
         self.TM_to_f = np.linalg.inv(self.f_to_TM)
-
-    def update_ref(self, t, flat_output):
-        """
-        This function receives the current time, and desired flat
-        outputs. It returns the reference command inputs.
-        Follows https://repository.upenn.edu/edissertations/547/
-
-        Inputs:
-            t, present time in seconds
-            flat_output, a dict describing the present desired flat outputs with keys
-                x,        position, m
-                x_dot,    velocity, m/s
-                x_ddot,   acceleration, m/s**2  a
-                x_dddot,  jerk, m/s**3          a_dot
-                x_ddddot, snap, m/s**4          a_ddot
-                yaw,      yaw angle, rad
-                yaw_dot,  yaw rate, rad/s
-                yaw_ddot, yaw acceleration, rad/s**2  #required! not the same if computing command using controller
-
-        Outputs:
-            control_input, a dict describing the present computed control inputs with keys
-                cmd_motor_speeds, rad/s
-                cmd_thrust, N (for debugging and laboratory; not used by simulator)
-                cmd_moment, N*m (for debugging; not used by simulator)
-                cmd_q, quaternion [i,j,k,w] (for laboratory; not used by simulator)
-                cmd_w, angular velocity
-                cmd_a, angular acceleration
-        """
-        cmd_motor_speeds = np.zeros((4,))
-        cmd_q = np.zeros((4,))
-
-        def normalize(x):
-            """Return normalized vector."""
-            return x / np.linalg.norm(x)
-
-        # Desired force vector.
-        t = flat_output['x_ddot']+ np.array([0, 0, self.g])
-        b3 = normalize(t) 
-        F_des = self.mass * (t)# this is vectorized
-
-        # Control input 1: collective thrust. 
-        u1 = np.dot(F_des, b3)
-
-        # Desired orientation to obtain force vector.
-        b3_des = normalize(F_des) #b3_des and b3 are the same
-        yaw_des = flat_output['yaw']
-        c1_des = np.array([np.cos(yaw_des), np.sin(yaw_des), 0])
-        b2_des = normalize(np.cross(b3_des, c1_des))
-        b1_des = np.cross(b2_des, b3_des)
-        R_des = np.stack([b1_des, b2_des, b3_des]).T
-
-        R = R_des # assume we have perfect tracking on rotation
-        
-        # Following section follows Mellinger paper to compute reference angular velocity
-        dot_u1 = np.dot(b3,flat_output['x_dddot'])
-        hw = self.mass/u1*(flat_output['x_dddot']-dot_u1*b3)
-        p  = np.dot(-hw, b2_des)
-        q  = np.dot(hw, b1_des)
-        w_des = np.array([0, 0, flat_output['yaw_dot']])
-        r  = np.dot(w_des, b3_des)
-        Omega = np.array([p, q, r])
-
-        wwu1b3 = np.cross(Omega, np.cross(Omega, u1*b3))
-        ddot_u1 = np.dot(b3, self.mass*flat_output['x_ddddot']) - np.dot(b3, wwu1b3)
-        ha = 1.0/u1*(self.mass*flat_output['x_ddddot'] - ddot_u1*b3 - 2*np.cross(Omega,dot_u1*b3) - wwu1b3)
-        p_dot = np.dot(-ha, b2_des)
-        q_dot = np.dot(ha, b1_des)
-        np.cross(Omega, Omega)
-        r_dot = flat_output['yaw_ddot'] *np.dot(np.array([0,0,1.0]), b3_des) #uniquely need yaw_ddot
-        Alpha = np.array([p_dot, q_dot, r_dot]) 
-
-        # Control input 2: moment on each body axis
-    
-        u2 =  self.inertia @ Alpha + np.cross(Omega, self.inertia @ Omega)
-
-        # Convert to cmd motor speeds. 
-        TM = np.array([u1, u2[0], u2[1], u2[2]])
-        cmd_motor_forces = self.TM_to_f @ TM
-        cmd_motor_speeds = cmd_motor_forces / self.k_eta
-        cmd_motor_speeds = np.sign(cmd_motor_speeds) * np.sqrt(np.abs(cmd_motor_speeds))
-
-        cmd_q = Rotation.from_matrix(R_des).as_quat()
-
-
-        control_input = {'cmd_motor_speeds':cmd_motor_speeds,
-                        'cmd_thrust':u1,
-                        'cmd_moment':u2,
-                        'cmd_q':cmd_q,
-                        'cmd_w':Omega,
-                        'cmd_a':Alpha}
-        return control_input
     
     def update(self, t, state, flat_output):
         """
@@ -188,6 +98,9 @@ class SE3Control(object):
                 cmd_q, quaternion [i,j,k,w]
                 cmd_w, angular rates in the body frame, rad/s
                 cmd_v, velocity in the world frame, m/s
+                cmd_acc, mass normalized thrust vector in the world frame, m/s/s.
+
+                Not all keys are used, it depends on the control_abstraction selected when initializing the Multirotor object. 
         """
         cmd_motor_speeds = np.zeros((4,))
         cmd_thrust = 0
@@ -247,7 +160,8 @@ class SE3Control(object):
         cmd_thrust = u1                                             # Commanded thrust, in units N.
         cmd_moment = u2                                             # Commanded moment, in units N-m.
         cmd_q = Rotation.from_matrix(R_des).as_quat()               # Commanded attitude as a quaternion.
-        cmd_v = -self.kp_vel*pos_err + flat_output['x_dot']     # Commanded velocity in world frame (if using cmd_vel control abstraction), in units m/s
+        cmd_v = -self.kp_vel*pos_err + flat_output['x_dot']         # Commanded velocity in world frame (if using cmd_vel control abstraction), in units m/s
+        cmd_acc = F_des/self.mass                                   # Commanded acceleration in world frame (if using cmd_acc control abstraction)
 
         control_input = {'cmd_motor_speeds':cmd_motor_speeds,
                          'cmd_motor_thrusts':cmd_rotor_thrusts,
@@ -255,5 +169,7 @@ class SE3Control(object):
                          'cmd_moment':cmd_moment,
                          'cmd_q':cmd_q,
                          'cmd_w':cmd_w,
-                         'cmd_v':cmd_v}
+                         'cmd_v':cmd_v,
+                         'cmd_acc': cmd_acc}
+        
         return control_input
