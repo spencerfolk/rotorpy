@@ -196,7 +196,7 @@ class TwoDRangeSensor():
 if __name__=="__main__":
 
     import matplotlib.pyplot as plt
-    from rotorpy.utils.generate_maps import plot_map
+    from rotorpy.utils.plotter import plot_map
     import matplotlib.colors as mcolors
     from matplotlib.patches import Rectangle
     import os

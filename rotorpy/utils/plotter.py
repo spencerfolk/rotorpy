@@ -314,6 +314,66 @@ def plot_map(ax, world_data, equal_aspect=True, color=None, edgecolor=None, alph
 
     return
 
+def plot_map(ax, world_data, equal_aspect=True, color=None, edgecolor=None, alpha=1, axes=True):
+    """
+    Plots the map in the world data in a top-down 2D view. 
+    Inputs:
+        ax: The axis to plot on
+        world_data: The world data to plot
+        equal_aspect: Determines if the aspect ratio of the plot should be equal.
+        color: The color of the buildings. If None (default), it will use the color of the buildings. 
+        edgecolor: The edge color of the buildings. If None (default), it will use the color of the buildings.
+        alpha: The alpha value of the buildings. If None (default), it will use the color of the buildings.
+        world_bounds: Whether or not to plot the world bounds as a dashed line around the 2D plot. 
+        axes: Whether or not to plot the axis labels
+    Outputs:
+        Plots the map in the axis of interest. 
+    """
+    from matplotlib.patches import Rectangle
+
+    plot_xmin = world_data['bounds']['extents'][0]
+    plot_xmax = world_data['bounds']['extents'][1]
+    plot_ymin = world_data['bounds']['extents'][2]
+    plot_ymax = world_data['bounds']['extents'][3]
+
+    for block in world_data['blocks']:
+        xmin = block['extents'][0]
+        xmax = block['extents'][1]
+        ymin = block['extents'][2]
+        ymax = block['extents'][3]
+        if color is None:
+            building_color = tuple(block['color'])
+        else:
+            building_color = color
+        if edgecolor is None:
+            building_edge_color = tuple(block['color'])
+        else:
+            building_edge_color = edgecolor
+        block_patch = Rectangle((xmin, ymin), (xmax-xmin), (ymax-ymin), linewidth=1, edgecolor=building_edge_color, facecolor=building_color, alpha=alpha, fill=True)
+        ax.add_patch(block_patch)
+
+        if xmin < plot_xmin:
+            plot_xmin = xmin
+        if xmax > plot_xmax:
+            plot_xmax = xmax
+        if ymin < plot_ymin:
+            plot_ymin = ymin
+        if ymax > plot_ymax:
+            plot_ymax = ymax
+
+    ax.set_xlim([plot_xmin, plot_xmax])
+    ax.set_ylim([plot_ymin, plot_ymax])
+
+    if axes:
+        ax.set_xlabel("X (m)")
+        ax.set_ylabel("Y (m)")
+
+    # Set the aspect ratio equal
+    if equal_aspect:
+        ax.set_aspect('equal')
+
+    return
+
 if __name__ == "__main__":
 
     from rotorpy.world import World
