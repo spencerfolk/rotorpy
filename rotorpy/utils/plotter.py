@@ -30,22 +30,22 @@ class Plotter():
 
         return
 
-    def plot_results(self, plot_mocap, plot_estimator, plot_imu):
+    def plot_results(self, plot_mocap, plot_estimator, plot_imu, fname=None):
         """
         Plot the results
 
         """
 
         # 3D Paths
-        fig = plt.figure('3D Path')
+        fig_3d = plt.figure('3D Path')
         # ax = Axes3Ds(fig)
-        ax = fig.add_subplot(projection='3d')
+        ax = fig_3d.add_subplot(projection='3d')
         self.world.draw(ax)
         ax.plot3D(self.x[:,0], self.x[:,1], self.x[:,2], 'b.')
         ax.plot3D(self.x_des[:,0], self.x_des[:,1], self.x_des[:,2], 'k')
 
         # Position and Velocity vs. Time
-        (fig, axes) = plt.subplots(nrows=2, ncols=1, sharex=True, num='Pos/Vel vs Time')
+        (fig_posvel, axes) = plt.subplots(nrows=2, ncols=1, sharex=True, num='Pos/Vel vs Time')
         ax = axes[0]
         ax.plot(self.time, self.x_des[:,0], 'r', self.time, self.x_des[:,1], 'g', self.time, self.x_des[:,2], 'b')
         ax.plot(self.time, self.x[:,0], 'r.',    self.time, self.x[:,1], 'g.',    self.time, self.x[:,2], 'b.')
@@ -62,7 +62,7 @@ class Plotter():
         ax.grid('major')
 
         # Orientation and Angular Velocity vs. Time
-        (fig, axes) = plt.subplots(nrows=2, ncols=1, sharex=True, num='Attitude/Rate vs Time')
+        (fig_attrate, axes) = plt.subplots(nrows=2, ncols=1, sharex=True, num='Attitude/Rate vs Time')
         ax = axes[0]
         ax.plot(self.time, self.q_des[:,0], 'r', self.time, self.q_des[:,1], 'g', self.time, self.q_des[:,2], 'b', self.time, self.q_des[:,3], 'm')
         ax.plot(self.time, self.q[:,0], 'r.',    self.time, self.q[:,1], 'g.',    self.time, self.q[:,2], 'b.',    self.time, self.q[:,3],     'm.')
@@ -79,7 +79,7 @@ class Plotter():
 
         if plot_mocap:  # if mocap should be plotted. 
             # Motion capture position and velocity vs time
-            (fig, axes) = plt.subplots(nrows=2, ncols=1, sharex=True, num='Motion Capture Pos/Vel vs Time')
+            (fig_mocapposvel, axes) = plt.subplots(nrows=2, ncols=1, sharex=True, num='Motion Capture Pos/Vel vs Time')
             ax = axes[0]
             ax.plot(self.time, self.x_mc[:,0], 'r.', self.time, self.x_mc[:,1], 'g.',    self.time, self.x_mc[:,2], 'b.')
             ax.legend(('x', 'y', 'z'))
@@ -93,7 +93,7 @@ class Plotter():
             ax.set_xlabel('time, s')
             ax.grid('major')
             # Motion Capture Orientation and Angular Velocity vs. Time
-            (fig, axes) = plt.subplots(nrows=2, ncols=1, sharex=True, num='Motion Capture Attitude/Rate vs Time')
+            (fig_mocapattrate, axes) = plt.subplots(nrows=2, ncols=1, sharex=True, num='Motion Capture Attitude/Rate vs Time')
             ax = axes[0]
             ax.plot(self.time, self.q_mc[:,0], 'r.',    self.time, self.q_mc[:,1], 'g.',    self.time, self.q_mc[:,2], 'b.',    self.time, self.q_mc[:,3],     'm.')
             ax.legend(('i', 'j', 'k', 'w'))
@@ -109,7 +109,7 @@ class Plotter():
             ax.grid('major')
 
         # Commands vs. Time
-        (fig, axes) = plt.subplots(nrows=3, ncols=1, sharex=True, num='Commands vs Time')
+        (fig_commands, axes) = plt.subplots(nrows=3, ncols=1, sharex=True, num='Commands vs Time')
         ax = axes[0]
         ax.plot(self.time, self.s_des[:,0], 'r', self.time, self.s_des[:,1], 'g', self.time, self.s_des[:,2], 'b',  self.time, self.s_des[:,3], 'k')
         ax.plot(self.time, self.s[:,0], 'r.',    self.time, self.s[:,1], 'g.',    self.time, self.s[:,2], 'b.',     self.time, self.s[:,3], 'k.')
@@ -129,7 +129,7 @@ class Plotter():
         ax.grid('major')
 
         # Winds
-        (fig, axes) = plt.subplots(nrows=3, ncols=1, sharex=True, num='Winds vs Time')
+        (fig_wind, axes) = plt.subplots(nrows=3, ncols=1, sharex=True, num='Winds vs Time')
         ax = axes[0]
         ax.plot(self.time, self.wind[:,0], 'r')
         ax.set_ylabel("wind X, m/s")
@@ -147,7 +147,7 @@ class Plotter():
 
         # IMU sensor
         if plot_imu:
-            (fig, axes) = plt.subplots(nrows=2, ncols=1, sharex=True, num="IMU Measurements vs Time")
+            (fig_imu, axes) = plt.subplots(nrows=2, ncols=1, sharex=True, num="IMU Measurements vs Time")
             ax = axes[0]
             ax.plot(self.time, self.accel[:,0], 'r.', self.time, self.accel[:,1], 'g.', self.time, self.accel[:,2], 'b.')
             ax.plot(self.time, self.accel_gt[:,0], 'k', self.time, self.accel_gt[:,1], 'c', self.time, self.accel_gt[:,2], 'm')
@@ -163,8 +163,8 @@ class Plotter():
         if plot_estimator:
             if self.estimator_exists:
                 N_filter = self.filter_state.shape[1]
-                (fig, axes) = plt.subplots(nrows=N_filter, ncols=1, sharex=True, num="Filter States vs Time")
-                fig.set_size_inches(11, 8.5)
+                (fig_filter, axes) = plt.subplots(nrows=N_filter, ncols=1, sharex=True, num="Filter States vs Time")
+                fig_filter.set_size_inches(11, 8.5)
                 for i in range(N_filter):
                     ax = axes[i]
                     ax.plot(self.time, self.filter_state[:,i], 'k', )
@@ -172,13 +172,30 @@ class Plotter():
                     ax.set_ylabel("x"+str(i))
                 ax.set_xlabel("Time, s")
 
-                (fig, axes) = plt.subplots(nrows=N_filter, ncols=1, sharex=True, num="Filter Covariance vs Time")
-                fig.set_size_inches(11, 8.5)
+                (fig_cov, axes) = plt.subplots(nrows=N_filter, ncols=1, sharex=True, num="Filter Covariance vs Time")
+                fig_cov.set_size_inches(11, 8.5)
                 for i in range(N_filter):
                     ax = axes[i]
                     ax.plot(self.time, self.sd[:,i]**2, 'k', )
                     ax.set_ylabel("cov(x"+str(i)+")")
                 ax.set_xlabel("Time, s")
+
+        if fname is not None:
+
+            root_path = os.path.join(os.path.dirname(__file__),'..','data_out')
+            fig_3d.savefig(os.path.join(root_path, fname+'_3dpath.png'))
+            fig_posvel.savefig(os.path.join(root_path, fname+'_posvel.png'))
+            fig_attrate.savefig(os.path.join(root_path, fname+'_attrate.png'))
+            fig_commands.savefig(os.path.join(root_path, fname+'_commands.png'))
+            fig_wind.savefig(os.path.join(root_path, fname+'_wind.png'))
+            if plot_mocap:
+                fig_mocapposvel.savefig(os.path.join(root_path, fname+'_mocapposvel.png'))
+                fig_mocapattrate.savefig(os.path.join(root_path, fname+'_mocapattrate.png'))
+            if plot_imu:
+                fig_imu.savefig(os.path.join(root_path, fname+'_imu.png'))
+            if plot_estimator:
+                fig_filter.savefig(os.path.join(root_path, fname+'_filter.png'))
+                fig_cov.savefig(os.path.join(root_path, fname+'_cov.png'))
 
         plt.show()
 

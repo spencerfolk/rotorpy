@@ -136,12 +136,20 @@ class Environment():
         self.result = dict(time=time, state=state, control=control, flat=flat, imu_measurements=imu_measurements, imu_gt=imu_gt, mocap_measurements=mocap_measurements, state_estimate=state_estimate, exit=exit)
 
         visualizer = Plotter(self.result, self.world)
+
+        # Remove gif or mp4 in filename if it exists (the respective functions will add appropriate extensions)
+        if fname is not None:
+            if ".gif" in fname:
+                fname = fname.replace(".gif", "")
+            if ".mp4" in fname:
+                fname = fname.replace(".mp4", "")
+                
         if animate_bool:
             # Do animation here
             visualizer.animate_results(fname=fname, animate_wind=animate_wind)
         if plot:
             # Do plotting here
-            visualizer.plot_results(plot_mocap=plot_mocap,plot_estimator=plot_estimator,plot_imu=plot_imu)
+            visualizer.plot_results(fname=fname,plot_mocap=plot_mocap,plot_estimator=plot_estimator,plot_imu=plot_imu)
             if not animate_bool:
                 plt.show()
 
