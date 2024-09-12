@@ -1,14 +1,15 @@
 from distutils.core import setup
 from os.path import isdir
 from itertools import product
+from setuptools import find_packages
 
 # Gather our flightsim and any projXX packages that happen to exist.
-all_packages = ['rotorpy']
-packages = list(filter(isdir, all_packages))
+#all_packages = ['rotorpy']
+#packages = list(filter(isdir, all_packages))
 
 setup(
     name='rotorpy',
-    packages=packages,
+    packages=find_packages(where="./"),
     version='1.1.0',
     install_requires=[
             'cvxopt',
