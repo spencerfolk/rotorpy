@@ -235,8 +235,13 @@ class Multirotor(object):
         # Rotate the force from the body frame to the inertial frame
         Ftot = R@FtotB
 
+        if self.__on_ground(state):
+            weight = np.array([0, 0, 0])
+        else:
+            weight = self.weight
+
         # Velocity derivative.
-        v_dot = (self.weight + Ftot) / self.mass
+        v_dot = (weight + Ftot) / self.mass
 
         # Angular velocity derivative.
         w = state['w']
@@ -409,6 +414,12 @@ class Multirotor(object):
         cmd_motor_speeds = np.sign(cmd_motor_speeds) * np.sqrt(np.abs(cmd_motor_speeds))
 
         return cmd_motor_speeds
+
+    def __on_ground(self, state):
+        """
+        Check if the vehicle is on the ground. 
+        """
+        return state['x'][2] <= 0.001
 
     @classmethod
     def rotate_k(cls, q):
