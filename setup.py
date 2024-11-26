@@ -20,4 +20,4 @@ setup(
             'ndsplines',
             'timeout_decorator',
             'tqdm',
-            'gymnasium'])
+            'gymnasium == 0.29.1'])
