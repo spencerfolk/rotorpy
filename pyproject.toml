@@ -1,0 +1,52 @@
+[project]
+name = "rotorpy"
+version = "1.1.1"
+description = "A multirotor simulator with aerodynamics for education and research."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { file = "LICENSE.md" }
+keywords = ["drone", "uav", "quadrotor", "multirotor", "aerodynamics", "simulation", "controls", "robotics", "estimation"]  # Optional
+authors = [
+    { name = "Spencer Folk", email = "sfolk@seas.upenn.edu" } 
+]
+maintainers = [
+    { name = "Spencer Folk", email = "sfolk@seas.upenn.edu" }
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+]
+dependencies = [
+    'cvxopt',
+    'matplotlib',
+    'filterpy == 1.4.5',
+    'numpy',
+    'scipy',
+    'pandas',
+    'timeout_decorator',
+    'tqdm',
+    'gymnasium == 0.29.1',
+]
+
+[project.optional-dependencies]
+learning = [
+    'stable_baselines3'
+]
+
+[project.urls]
+"Homepage" = "https://github.com/spencerfolk/rotorpy"
+"Bug Reports" = "https://github.com/spencerfolk/rotorpy/issues"
+"Source" = "https://github.com/spencerfolk/rotorpy"
+
+
+[build-system]
+requires = ["setuptools>=44.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["rotorpy", "rotorpy.*"]
+[tool.setuptools]

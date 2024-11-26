@@ -29,20 +29,15 @@ RotorPy also includes first-order motor dynamics to simulate lag, as well as sup
 
 # Installation
 
-First, clone this repository into a folder of your choosing.  
+RotorPy can be installed using `pip`:
 
-It is recommended that you use a virtual environment to install this simulator. I recommend using [Python venv](https://docs.python.org/3/library/venv.html) because it's lightweight. 
-
-All the necessary dependencies can be installed using the following: 
-**NOTE:** Read this command carefully. The period `.` is intentional. 
 ```
-pip install -e . 
+pip install rotorpy 
 ```
-This will install all the packages as specified in `setup.py`. You may need to use `pip3` instead of `pip` to avoid conflict with Python 2 if installed. 
-
-To confirm installation, you should see the package `rotorpy` listed among the other packages available in your environment. 
 
 # Usage
+
+There are a few example scripts found in `rotorpy/examples/` that demonstrate how to use RotorPy in a variety of ways including for Monte Carlo evaluations, reinforcement learning, and swarms. 
 
 #### Regular usage
 A good place to start would be to reference the `rotorpy/examples/basic_usage.py` script. It goes through the necessary imports and how to create and execute an instance of the simulator. 
@@ -50,6 +45,51 @@ A good place to start would be to reference the `rotorpy/examples/basic_usage.py
 At minimum the simulator requires vehicle, controller, and trajectory objects. The vehicle (and potentially the controller) is parameterized by a unique parameter file, such as in `rotorpy/vehicles/hummingbird_params.py`. There is also the option to specify your own IMU, world bounds, and how long you would like to run the simulator for. 
 
 The output of the simulator is a dictionary containing a time vector and the time histories of all the vehicle's states, inputs, and measurements.
+
+Below is a minimum working example: 
+
+```
+from rotorpy.vehicles.multirotor import Multirotor
+from rotorpy.vehicles.crazyflie_params import quad_params
+from rotorpy.controllers.quadrotor_control import SE3Control
+from rotorpy.trajectories.circular_traj import CircularTraj
+from rotorpy.wind.default_winds import SinusoidWind
+
+sim_instance = Environment(vehicle=Multirotor(quad_params),           # vehicle object, must be specified. 
+                           controller=SE3Control(quad_params),        # controller object, must be specified.
+                           trajectory=CircularTraj(radius=2),         # trajectory object, must be specified.
+                           wind_profile=SinusoidWind(),               # OPTIONAL: wind profile object, if none is supplied it will choose no wind. 
+                           sim_rate     = 100,                        # OPTIONAL: The update frequency of the simulator in Hz. Default is 100 Hz.
+                           imu          = None,                       # OPTIONAL: imu sensor object, if none is supplied it will choose a default IMU sensor.
+                           mocap        = None,                       # OPTIONAL: mocap sensor object, if none is supplied it will choose a default mocap.  
+                           estimator    = None,                       # OPTIONAL: estimator object
+                           world        = None,                      # OPTIONAL: the world, same name as the file in rotorpy/worlds/, default (None) is empty world
+                           safety_margin= 0.25                        # OPTIONAL: defines the radius (in meters) of the sphere used for collision checking
+                       )
+
+x0 = {'x': np.array([0,0,0]),
+      'v': np.zeros(3,),
+      'q': np.array([0, 0, 0, 1]), # [i,j,k,w]
+      'w': np.zeros(3,),
+      'wind': np.array([0,0,0]),  # Since wind is handled elsewhere, this value is overwritten
+      'rotor_speeds': np.array([1788.53, 1788.53, 1788.53, 1788.53])}
+sim_instance.vehicle.initial_state = x0
+
+# The results are a dictionary containing the relevant state, input, and measurements vs time.
+results = sim_instance.run(t_final      = 20,       # The maximum duration of the environment in seconds
+                           use_mocap    = False,       # Boolean: determines if the controller should use the motion capture estimates. 
+                           terminate    = False,       # Boolean: if this is true, the simulator will terminate when it reaches the last waypoint.
+                           plot            = True,     # Boolean: plots the vehicle states and commands   
+                           plot_mocap      = True,     # Boolean: plots the motion capture pose and twist measurements
+                           plot_estimator  = True,     # Boolean: plots the estimator filter states and covariance diagonal elements
+                           plot_imu        = True,     # Boolean: plots the IMU measurements
+                           animate_bool    = True,     # Boolean: determines if the animation of vehicle state will play. 
+                           animate_wind    = True,    # Boolean: determines if the animation will include a scaled wind vector to indicate the local wind acting on the UAV. 
+                           verbose         = True,     # Boolean: will print statistics regarding the simulation. 
+                           fname   = None # Filename is specified if you want to save the animation. The save location is rotorpy/data_out/. 
+                    )
+
+```
 
 #### Reinforcement Learning
 New in `v1.1.0`, RotorPy includes a custom Gymnasium environment, `QuadrotorEnv`, which is a stripped down version of the regular simulation environment intended for applications in reinforcement learning. `QuadrotorEnv` features all the aerodynamics and motor dynamics, but also supports different control abstractions ranging from high level velocity vector commands all the way down to direct individual motor speed commands. This environment also allows the user to specify their own reward function. 
@@ -72,7 +112,7 @@ If you use RotorPy for your work please cite our companion workshop paper contri
 
 ```
 @article{folk2023rotorpy,
-  title={RotorPy: A Python-based Multirotor Simulator with Aerodynamics for Education and Research},
+  title={{RotorPy}: A Python-based Multirotor Simulator with Aerodynamics for Education and Research},
   author={Folk, Spencer and Paulos, James and Kumar, Vijay},
   journal={arXiv preprint arXiv:2306.04485},
   year={2023}
@@ -88,11 +128,18 @@ The following is a selection of papers that have used RotorPy (or previous versi
 2. K. Y. Chee, T. Z. Jiahao and M. A. Hsieh. "KNODE-MPC: A Knowledge-Based Data-Driven Predictive Control Framework for Aerial Robots,'' in *IEEE Robotics and Automation Letters*, vol. 7, no. 2, pp. 2819-2826, Apr 2022.
 3. Jiahao, Tom Z. and Chee, Kong Yao and Hsieh, M. Ani. "Online Dynamics Learning for Predictive Control with an Application to Aerial Robots," in *the Proc. of the 2022 Conference on Robot Learning (CoRL)*, Auckland, NZ, Dec 2022.
 4. K. Mao, J. Welde, M. A. Hsieh, and V. Kumar, “Trajectory planning for the bidirectional quadrotor as a differentially flat hybrid system,” in *2023 International Conference on Robotics and Automation (ICRA) (accepted)*, 2023.
-5. He, S., Hsu, C. D., Ong, D., Shao, Y. S., & Chaudhari, P. (2023). Active Perception using Neural Radiance Fields. *arXiv preprint arXiv:2310.09892*.
+5. He, S., Hsu, C. D., Ong, D., Shao, Y. S., & Chaudhari, P. (2023). "Active Perception using Neural Radiance Fields," submitted to *arXiv preprint arXiv:2310.09892*.
+6. Tao, R., Cheng, S., Wang, X., Wang, S., & Hovakimyan, N. (2024). "DiffTune-MPC: Closed-loop learning for model predictive control," in *IEEE Robotics and Automation Letters*.
+7. Hsu, C. D., & Chaudhari, P. (2024). "Active Scout: Multi-Target Tracking Using Neural Radiance Fields in Dense Urban Environments." submitted to *arXiv preprint arXiv:2406.07431*.
+8. Sanghvi, H., Folk, S., & Taylor, C. J. "OCCAM: Online Continuous Controller Adaptation with Meta-Learned Models," in *8th Annual Conference on Robot Learning (CoRL)*.
 
-RotorPy was also listed among other UAV simulators in a recent survey:
 
-Dimmig, C. A., Silano, G., McGuire, K., Gabellieri, C., Hönig, W., Moore, J., & Kobilarov, M. (2023). *Survey of Simulators for Aerial Robots*. arXiv preprint arXiv:2311.02296.
+RotorPy was also listed among other UAV simulators in two recent surveys:
+
+Dimmig, C. A., Silano, G., McGuire, K., Gabellieri, C., Hšnig, W., Moore, J., & Kobilarov, M. (2024). "Survey of Simulators for Aerial Robots: An Overview and In-Depth Systematic Comparisons," in *IEEE Robotics & Automation Magazine*.
+
+Nikolaiev, M., & Novotarskyi, M. (2024). "Comparative Review of Drone Simulators," in *Information, Computing and Intelligent systems*, (4), 79-98.
+
 
 **If you use this simulator for published work, let me know as I am happy to add your reference to this list.**
 
