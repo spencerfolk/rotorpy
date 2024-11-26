@@ -6,11 +6,13 @@ class HoverTraj(object):
     By modifying the initial condition, you can create step response
     experiments.
     """
-    def __init__(self):
+    def __init__(self, x0=np.array([0, 0, 0])):
         """
         This is the constructor for the Trajectory object. A fresh trajectory
         object will be constructed before each mission.
         """
+
+        self.x0 = x0
 
     def update(self, t):
         """
@@ -28,7 +30,7 @@ class HoverTraj(object):
                 yaw,      yaw angle, rad
                 yaw_dot,  yaw rate, rad/s
         """
-        x    = np.zeros((3,))
+        x = self.x0
         x_dot = np.zeros((3,))
         x_ddot = np.zeros((3,))
         x_dddot = np.zeros((3,))

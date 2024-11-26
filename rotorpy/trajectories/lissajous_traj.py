@@ -9,7 +9,7 @@ class TwoDLissajous(object):
     The standard Lissajous on the XY curve as defined by https://en.wikipedia.org/wiki/Lissajous_curve
     This is planar in the XY plane at a fixed height. 
     """
-    def __init__(self, A=1, B=1, a=1, b=1, delta=0, height=0, yaw_bool=False):
+    def __init__(self, A=1, B=1, a=1, b=1, delta=0, x_offset=0, y_offset=0, height=0, yaw_bool=False):
         """
         This is the constructor for the Trajectory object. A fresh trajectory
         object will be constructed before each mission.
@@ -20,6 +20,8 @@ class TwoDLissajous(object):
             a := frequency on the X axis
             b := frequency on the Y axis
             delta := phase offset between the x and y parameterization
+            x_offset := the offset of the trajectory in the x axis
+            y_offset := the offset of the trajectory in the y axis
             height := the z height that the lissajous occurs at
             yaw_bool := determines whether the vehicle should yaw
         """
@@ -28,6 +30,8 @@ class TwoDLissajous(object):
         self.a, self.b = a, b 
         self.delta = delta
         self.height = height
+        self.x_offset = x_offset
+        self.y_offset = y_offset
 
         self.yaw_bool = yaw_bool
 
@@ -47,8 +51,8 @@ class TwoDLissajous(object):
                 yaw,      yaw angle, rad
                 yaw_dot,  yaw rate, rad/s
         """
-        x        = np.array([self.A*np.sin(self.a*t + self.delta),
-                             self.B*np.sin(self.b*t),
+        x        = np.array([self.x_offset + self.A*np.sin(self.a*t + self.delta),
+                             self.y_offset + self.B*np.sin(self.b*t),
                              self.height])
         x_dot    = np.array([self.a*self.A*np.cos(self.a*t + self.delta),
                              self.b*self.B*np.cos(self.b*t),
