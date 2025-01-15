@@ -58,7 +58,8 @@ class Multirotor(object):
                                             'wind': np.array([0,0,0]),  # Since wind is handled elsewhere, this value is overwritten
                                             'rotor_speeds': np.array([1788.53, 1788.53, 1788.53, 1788.53])},
                        control_abstraction='cmd_motor_speeds',
-                       aero = True,  
+                       aero = True,
+                       enable_ground = False  
                 ):
         """
         Initialize quadrotor physical parameters.
@@ -235,13 +236,11 @@ class Multirotor(object):
         # Rotate the force from the body frame to the inertial frame
         Ftot = R@FtotB
 
-        if self.__on_ground(state):
-            weight = np.array([0, 0, 0])
-        else:
-            weight = self.weight
+        if self.__on_ground(state) and self._enable_ground:
+            Ftot -= self.weight
 
         # Velocity derivative.
-        v_dot = (weight + Ftot) / self.mass
+        v_dot = (self.weight + Ftot) / self.mass
 
         # Angular velocity derivative.
         w = state['w']
