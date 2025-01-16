@@ -142,45 +142,59 @@ class Ardupilot(Multirotor):
         return angular_velocities      
 
     @staticmethod
-    def _create_sensor_data(state : Dict[str, np.ndarray], statedot, imu : Imu, enable_imu_noise = False):
-        """ TODO: improve docstring
-        This function takes the state and state derivative of a `rotorpy.vehicles.multirotor` object and converts it to the Ardupilot convention 
-        for position, velocity, acceleration, quaternions and angular velocities.
-        
-        The attitude quaternion in rotorpy is in scalar-last representation (x,y,z,w)
-        It represents the rotation from the body frame (GLU) to the world frame (ENU)
-        The attitude quaternion in Ardupilot is in scalar-first representation (w,x,y,z)
-        It represents the rotation from the world frame (NED) to the body frame (FRD) 
-        
+    def _create_sensor_data(
+
+
+
+        state: Dict[str, np.ndarray],
+        statedot: np.ndarray,
+        imu: Imu,
+        enable_imu_noise: bool = False,
+    ) -> SensorData:
+        """
+        Converts the state and state derivative of a `rotorpy.vehicles.multirotor` object to the Ardupilot convention
+        for position, velocity, acceleration, quaternions, and angular velocities.
+        Args:
+            state (Dict[str, np.ndarray]): The current state of the multirotor, including position, velocity, and attitude quaternion.
+            statedot (np.ndarray): The state derivative, representing the acceleration.
+            imu (Imu): The IMU object used to obtain measurements.
+            enable_imu_noise (bool, optional): Flag to enable or disable IMU noise in the measurements. Defaults to False.
+        Notes:
+            - The attitude quaternion in rotorpy is in scalar-last representation (x, y, z, w) and represents the rotation
+              from the body frame (GLU) to the world frame (ENU).
+            - The attitude quaternion in Ardupilot is in scalar-first representation (w, x, y, z) and represents the rotation
+              from the world frame (NED) to the body frame (FRD).
+
         Returns:
-            SensorData
+            SensorData: The sensor data in the Ardupilot convention, including position, velocity, acceleration,
+                        attitude quaternion, and angular velocities.
         """
 
         # 1. Obtain attitude quaternion (scalar-first),
         # representing the rotation from the body (GLU) frame to the world (ENU) frame
-        R_glu2enu = R.from_quat(state['q'], scalar_first = False)
+        R_glu2enu = R.from_quat(state["q"], scalar_first=False)
 
         # 2. Obtain the IMU meaurements in the GLU frame
         acceleration = copy.deepcopy(statedot)
         meas_dict = imu.measurement(state, acceleration, with_noise=enable_imu_noise)
-        a_glu, omega_glu = meas_dict['accel'], meas_dict['gyro']
+        a_glu, omega_glu = meas_dict["accel"], meas_dict["gyro"]
         a_frd = Ardupilot.M_glu2frd.apply(a_glu).tolist()
         omega_frd = Ardupilot.M_glu2frd.apply(omega_glu).tolist()
 
         # 2. Obtain the rotation from the body frame (FRD) to the world frame (NED)
         # This is the attitude of the FRD frame in the NED frame
-        R_frd2ned = Ardupilot.M_enu2ned * R_glu2enu * Ardupilot.M_glu2frd      
+        R_frd2ned = Ardupilot.M_enu2ned * R_glu2enu * Ardupilot.M_glu2frd
 
         return SensorData(
-            enu2ned(*state['x'].tolist()),\
-            R_frd2ned.as_quat(scalar_first=True).tolist(),\
-            enu2ned(*state['v'].tolist()),\
+            enu2ned(*state["x"].tolist()),
+            R_frd2ned.as_quat(scalar_first=True).tolist(),
+            enu2ned(*state["v"].tolist()),
             xgyro=omega_frd[0],
             ygyro=omega_frd[1],
             zgyro=omega_frd[2],
             xacc=a_frd[0],
             yacc=a_frd[1],
-            zacc=a_frd[2]
+            zacc=a_frd[2],
         )
 
     def _send_loop(self):
