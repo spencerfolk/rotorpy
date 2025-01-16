@@ -54,7 +54,7 @@ class SensorData:
         assert len(self.sim_velocity_inertial) == 3
         assert len(self.sim_attitude) == 4
 
-    
+
 class Ardupilot(Multirotor):
     M_glu2frd = R.from_euler('x', np.pi)
     M_enu2ned = R.from_matrix([[0, 1, 0], [1, 0, 0], [0, 0, -1]])
@@ -76,32 +76,52 @@ class Ardupilot(Multirotor):
 
         self._sitl_output_thread = threading.Thread(target=self._send_loop, name='SITL_out')
         self._sitl_output_thread.start()
-    
+
     def step(self, state, control, t_step):
         if self._ardupilot_control:
             control = {'cmd_motor_speeds': self._motor_cmd_to_omega(self._control_cmd.cmd_motor_speeds)}
 
         # TODO: this should be moved inside the `Multirotor` class
         if self._on_ground(state) and self._enable_ground:
-            # The vehicle has hit or is below the ground
-
-            # Constrain the position to the ground level
-            state['x'][2] = 0
-            
-            # If the vehicle is moving downward, stop vertical motion
-            if state['v'][2] < 0:
-                state['v'][2] = 0  # Stop downward velocity
-
-            # Reset angular velocity to stop spinning
-            state['w'] = np.zeros(3,)
-
-            # TODO: Obtain yaw angle, set pitch and roll angles to zero
+            state = self._handle_vehicle_on_ground(state)
 
         statedot = self.statedot(state, control, t_step)
         state =  super().step(state, control, t_step)
         self.t += t_step
-        
+
         self.sensor_data = self._create_sensor_data(state, statedot, self.imu, self.__enable_imu_noise)
+
+        return state
+
+    def _handle_vehicle_on_ground(
+        self, state: Dict[str, np.ndarray]
+    ) -> Dict[str, np.ndarray]:
+        """
+        Handles the vehicle's state when it is on the ground.
+        This method performs the following actions:
+        - Constrains the vehicle's position to the ground level (z = 0).
+        - Stops any downward vertical motion by setting the vertical velocity to zero if it is negative.
+        - Resets the angular velocity to zero to stop any spinning motion.
+        - Sets the pitch and roll angles to zero while preserving the heading angle.
+        Args:
+            state (Dict[str, np.ndarray]): The current state of the vehicle, which includes position ('x'),
+                                           velocity ('v'), angular velocity ('w'), orientation ('q'),
+                                           wind vector ('wind') and motor angular velocities ('rotor_speeds').
+        Returns:
+            Dict[str, np.ndarray]: The updated state of the vehicle after applying the ground constraints.
+        """
+
+        state["x"][2] = 0
+
+        if state["v"][2] < 0:
+            state["v"][2] = 0
+
+        state["w"] = np.zeros(
+            3,
+        )
+
+        _, _, heading = R.from_quat(state["q"]).as_euler("XYZ")
+        state["q"] = R.from_euler("Z", heading).as_quat()
 
         return state
 
@@ -119,8 +139,7 @@ class Ardupilot(Multirotor):
         reordered_pwm_commands = [rotor_2, rotor_0, rotor_3, rotor_1]
         normalized_commands = [(c-PWM_MIN)/(PWM_MAX-PWM_MIN) for c in reordered_pwm_commands]
         angular_velocities = [838.0*c for c in normalized_commands] # TODO: remove magic constant
-        return angular_velocities
-        
+        return angular_velocities      
 
     @staticmethod
     def _create_sensor_data(state : Dict[str, np.ndarray], statedot, imu : Imu, enable_imu_noise = False):
@@ -136,7 +155,6 @@ class Ardupilot(Multirotor):
         Returns:
             SensorData
         """
-        
 
         # 1. Obtain attitude quaternion (scalar-first),
         # representing the rotation from the body (GLU) frame to the world (ENU) frame
@@ -152,7 +170,7 @@ class Ardupilot(Multirotor):
         # 2. Obtain the rotation from the body frame (FRD) to the world frame (NED)
         # This is the attitude of the FRD frame in the NED frame
         R_frd2ned = Ardupilot.M_enu2ned * R_glu2enu * Ardupilot.M_glu2frd      
-        
+
         return SensorData(
             enu2ned(*state['x'].tolist()),\
             R_frd2ned.as_quat(scalar_first=True).tolist(),\
@@ -204,5 +222,5 @@ if __name__ == '__main__':
     dt = 0.01
     while True:
         state = vehicle.step(state, {'cmd_motor_speeds': [0,]*4}, dt)
-        print(f"Attitude angles: {R.from_quat(state['q'], scalar_first=True).as_euler('zyx', degrees=True)}, Height: {state['x'][2]}")
+        print(f"\nAttitude angles: {R.from_quat(state['q'], scalar_first=True).as_euler('zyx', degrees=True)}\n Height: {state['x'][2]}\n")
         time.sleep(dt)
