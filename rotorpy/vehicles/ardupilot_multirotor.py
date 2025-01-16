@@ -143,11 +143,8 @@ class Ardupilot(Multirotor):
 
     @staticmethod
     def _create_sensor_data(
-
-
-
         state: Dict[str, np.ndarray],
-        statedot: np.ndarray,
+        statedot: Dict[str, np.ndarray],
         imu: Imu,
         enable_imu_noise: bool = False,
     ) -> SensorData:
@@ -216,7 +213,7 @@ class Ardupilot(Multirotor):
             start_time = time.time()
             received, pwm = self.ap_link.pre_update(self.t)
             if received: # TODO: is this being handled correctly?
-                self._control_cmd.cmd_motor_speeds = list(pwm[0:4])
+                self._control_cmd.cmd_motor_speeds = list(pwm[0:4]) # type: ignore
             self.ap_link.post_update(self.sensor_data, self.t)
             elapsed_time = time.time() - start_time
             time.sleep(max(0, interval - elapsed_time))
