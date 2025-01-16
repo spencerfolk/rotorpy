@@ -111,6 +111,7 @@ class Multirotor(object):
                                      [0,            self.c_Dy,  0],
                                      [0,            0,          self.c_Dz]])
         self.g = 9.81 # m/s^2
+        self._enable_ground = enable_ground
 
         self.inv_inertia = inv(self.inertia)
         self.weight = np.array([0, 0, -self.mass*self.g])
@@ -236,7 +237,7 @@ class Multirotor(object):
         # Rotate the force from the body frame to the inertial frame
         Ftot = R@FtotB
 
-        if self.__on_ground(state) and self._enable_ground:
+        if self._on_ground(state) and self._enable_ground:
             Ftot -= self.weight
 
         # Velocity derivative.
@@ -414,7 +415,7 @@ class Multirotor(object):
 
         return cmd_motor_speeds
 
-    def __on_ground(self, state):
+    def _on_ground(self, state):
         """
         Check if the vehicle is on the ground. 
         """
