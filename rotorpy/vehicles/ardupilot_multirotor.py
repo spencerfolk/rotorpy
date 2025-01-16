@@ -110,18 +110,18 @@ class Ardupilot(Multirotor):
         Returns:
             Dict[str, np.ndarray]: The updated state of the vehicle after applying the ground constraints.
         """
-
+        # FIXME: when the motor command is zero and the vehicle is on the ground it drifts (threshold issue?)
         state["x"][2] = 0
 
         if state["v"][2] < 0:
-            state["v"][2] = 0
+            state["v"] = np.zeros(3,)
 
         state["w"] = np.zeros(
             3,
         )
 
         _, _, heading = R.from_quat(state["q"]).as_euler("XYZ")
-        state["q"] = R.from_euler("Z", heading).as_quat()
+        state["q"] = R.from_euler("Z", -heading).as_quat()
 
         return state
 
@@ -236,5 +236,4 @@ if __name__ == '__main__':
     dt = 0.01
     while True:
         state = vehicle.step(state, {'cmd_motor_speeds': [0,]*4}, dt)
-        print(f"\nAttitude angles: {R.from_quat(state['q'], scalar_first=True).as_euler('zyx', degrees=True)}\n Height: {state['x'][2]}\n")
         time.sleep(dt)
