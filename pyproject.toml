@@ -27,7 +27,6 @@ dependencies = [
     'numpy',
     'scipy',
     'pandas',
-    'timeout_decorator',
     'tqdm',
     'gymnasium == 0.29.1',
 ]
