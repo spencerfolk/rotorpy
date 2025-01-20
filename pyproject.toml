@@ -28,7 +28,7 @@ dependencies = [
     'scipy',
     'pandas',
     'tqdm',
-    'gymnasium == 0.29.1',
+    'gymnasium',
 ]
 
 [project.optional-dependencies]

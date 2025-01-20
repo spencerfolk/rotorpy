@@ -48,7 +48,7 @@ env = gym.make("Quadrotor-v0",
 # Now reset the quadrotor.
 # Setting initial_state to 'random' will randomly place the vehicle in the map near the origin.
 # But you can also set the environment resetting to be deterministic. 
-observation, info = env.reset(initial_state='random')
+observation, info = env.reset(options={'initial_state': 'random'})
 
 # Number of timesteps
 T = 300

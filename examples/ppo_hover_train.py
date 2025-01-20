@@ -59,7 +59,7 @@ env = gym.make("Quadrotor-v0",
 # check_env(env, warn=True)  # you can check the environment using built-in tools
 
 # Reset the environment
-observation, info = env.reset(initial_state='random', options={'pos_bound': 2, 'vel_bound': 0})
+observation, info = env.reset(options={'initial_state': 'random', 'pos_bound': 2, 'vel_bound': 0})
 
 # Create a new model
 model = PPO(MlpPolicy, env, verbose=1, ent_coef=0.01, tensorboard_log=log_dir)

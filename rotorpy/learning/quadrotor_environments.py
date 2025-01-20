@@ -70,9 +70,9 @@ class QuadrotorEnv(gym.Env):
 
         self.metadata['render_fps'] = render_fps
 
-        self.initial_state = initial_state
+        self.initial_state = deepcopy(initial_state)
 
-        self.vehicle_state = initial_state
+        self.vehicle_state = deepcopy(initial_state)
 
         assert control_mode in self.metadata["control_modes"]  # Don't accept improper control modes
         self.control_mode = control_mode
@@ -184,34 +184,44 @@ class QuadrotorEnv(gym.Env):
             # Close the plots
             plt.close('all')
     
-    def reset(self, seed=None, initial_state='random', options={'pos_bound': 2, 'vel_bound': 0}):
+    def reset(self, seed=None, options={'initial_state': 'random', 'pos_bound': 2, 'vel_bound': 0}):
         """
         Reset the environment
         Inputs:
-            seed: the seed for any random number generation, mostly for reproducibility. 
-            initial_state: determines how to set the quadrotor again. Options are...
-                        'random': will randomly select the state of the quadrotor. 
-                        'deterministic': will set the state to the initial state selected by the user when creating
-                                         the quadrotor environment (usually hover). 
-                        the user can also specify the state itself as a dictionary... e.g. 
-                            reset(options={'initial_state': 
-                                 {'x': np.array([0,0,0]),
-                                  'v': np.zeros(3,),
-                                  'q': np.array([0, 0, 0, 1]), # [i,j,k,w]
-                                  'w': np.zeros(3,),
-                                  'wind': np.array([0,0,0]),  # Since wind is handled elsewhere, this value is overwritten
-                                  'rotor_speeds': np.array([1788.53, 1788.53, 1788.53, 1788.53])}
-                                  })
+            seed: the seed for any random number generation, mostly for reproducibility.
             options: dictionary for misc options for resetting the scene. 
+                        'initial_state': determines how to set the quadrotor again. Options are...
+                            'random': will randomly select the state of the quadrotor. 
+                            'deterministic': will set the state to the initial state selected by the user when creating
+                                            the quadrotor environment (usually hover). 
+                            the user can also specify the state itself as a dictionary... e.g. 
+                                reset(options={'initial_state': 
+                                    {'x': np.array([0,0,0]),
+                                    'v': np.zeros(3,),
+                                    'q': np.array([0, 0, 0, 1]), # [i,j,k,w]
+                                    'w': np.zeros(3,),
+                                    'wind': np.array([0,0,0]),  # Since wind is handled elsewhere, this value is overwritten
+                                    'rotor_speeds': np.array([1788.53, 1788.53, 1788.53, 1788.53])}
+                                    })
                         'pos_bound': the min/max position region for random placement. 
                         'vel_bound': the min/max velocity region for random placement
                                 
         """
+        # If any options are not specified, set them to default values.
+        if 'pos_bound' not in options:
+            options['pos_bound'] = 2
+        if 'vel_bound' not in options:
+            options['vel_bound'] = 0
+        if 'initial_state' not in options:
+            options['initial_state'] = 'random'
+        
+        # Assert that the bounds are greater than or equal to 0.
         assert options['pos_bound'] >= 0 and options['vel_bound'] >= 0 , "Bounds must be greater than or equal to 0."
 
+        # Reset the gym environment
         super().reset(seed=seed)
 
-        if initial_state == 'random':
+        if options['initial_state'] == 'random':
             # Randomly select an initial state for the quadrotor. At least assume it is level. 
             pos = np.random.uniform(low=-options['pos_bound'], high=options['pos_bound'], size=(3,))
             vel = np.random.uniform(low=-options['vel_bound'], high=options['vel_bound'], size=(3,))
@@ -222,13 +232,13 @@ class QuadrotorEnv(gym.Env):
                      'wind': np.array([0,0,0]),  # Since wind is handled elsewhere, this value is overwritten
                      'rotor_speeds': np.array([1788.53, 1788.53, 1788.53, 1788.53])}
 
-        elif initial_state == 'deterministic':
+        elif options['initial_state'] == 'deterministic':
             state = self.initial_state
         
-        elif isinstance(initial_state, dict):
+        elif isinstance(options['initial_state'], dict):
             # Ensure the correct keys are in dict.  
-            if all(key in initial_state for key in ('x', 'v', 'q', 'w', 'wind', 'rotor_speeds')):
-                state = initial_state
+            if all(key in options['initial_state'] for key in ('x', 'v', 'q', 'w', 'wind', 'rotor_speeds')):
+                state = options['initial_state']
             else:
                 raise KeyError("Missing state keys in your initial_state. You must specify values for ('x', 'v', 'q', 'w', 'wind', 'rotor_speeds')")
 
