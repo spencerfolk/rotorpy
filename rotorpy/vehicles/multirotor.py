@@ -200,6 +200,7 @@ class Multirotor(object):
 
         # Add noise to the motor speed measurement
         state['rotor_speeds'] += np.random.normal(scale=np.abs(self.motor_noise), size=(self.num_rotors,))
+        state['rotor_speeds'] = np.clip(state['rotor_speeds'], self.rotor_speed_min, self.rotor_speed_max)
 
         return state
 
