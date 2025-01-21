@@ -35,10 +35,12 @@ learning = [
     'stable_baselines3'
 ]
 dev = [
-    'pytest'
+    'pytest',
+    'filterpy == 1.4.5',
 ]
 testing = [
     'pytest',
+    'filterpy == 1.4.5',
 ]
 filter = [
     'filterpy == 1.4.5',
