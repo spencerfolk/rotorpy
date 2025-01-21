@@ -32,10 +32,7 @@ def test_animate():
     from rotorpy.world import World
     
     print("\nTesting animate() function")
-
-    # Construct output file to test animation saving.
-    output_file = os.path.join(os.path.dirname(__file__), '..', 'rotorpy', 'data_out', 'test_animation.mp4')
-
+    
     # Create dummy data. 
     world = World.empty([-1, 1, -1, 1, -1, 1])
     T = np.linspace(0, 1, 100)
@@ -44,7 +41,7 @@ def test_animate():
     wind = np.zeros((T.size, 3))
     
     # Animate the results.
-    ani = animate(T, position, rotation, wind=wind, animate_wind=False, world=world, filename=output_file, blit=False, show_axes=True, close_on_finish=True)
+    ani = animate(T, position, rotation, wind=wind, animate_wind=False, world=world, filename=None, blit=False, show_axes=True, close_on_finish=True)
 
 def test_numpy_encoding():
     from rotorpy.utils.numpy_encoding import NumpyJSONEncoder, to_ndarray

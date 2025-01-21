@@ -41,7 +41,6 @@ dev = [
 testing = [
     'pytest',
     'filterpy == 1.4.5',
-    'ffmpeg',
 ]
 filter = [
     'filterpy == 1.4.5',

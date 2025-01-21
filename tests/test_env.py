@@ -55,7 +55,7 @@ def test_basic_env():
 
     # Running the simulation
     print("\tRunning the simulation...")
-    results = sim_instance.run(t_final      = 1,       # The maximum duration of the environment in seconds
+    results = sim_instance.run(t_final      = 1,        # The maximum duration of the environment in seconds
                             use_mocap    = False,       # Boolean: determines if the controller should use the motion capture estimates. 
                             terminate    = False,       # Boolean: if this is true, the simulator will terminate when it reaches the last waypoint.
                             plot            = True,     # Boolean: plots the vehicle states and commands   
@@ -63,9 +63,9 @@ def test_basic_env():
                             plot_estimator  = True,     # Boolean: plots the estimator filter states and covariance diagonal elements
                             plot_imu        = True,     # Boolean: plots the IMU measurements
                             animate_bool    = True,     # Boolean: determines if the animation of vehicle state will play. 
-                            animate_wind    = True,    # Boolean: determines if the animation will include a scaled wind vector to indicate the local wind acting on the UAV. 
+                            animate_wind    = True,     # Boolean: determines if the animation will include a scaled wind vector to indicate the local wind acting on the UAV. 
                             verbose         = True,     # Boolean: will print statistics regarding the simulation. 
-                            fname   = "test_simulation" # Filename is specified if you want to save the animation. The save location is rotorpy/data_out/. 
+                            fname   = None              # Filename is specified if you want to save the animation. The save location is rotorpy/data_out/. 
                         )
 
     # Save the simulation data to a CSV file
