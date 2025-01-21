@@ -30,7 +30,10 @@ from rotorpy.sensors.imu import Imu
 from rotorpy.sensors.external_mocap import MotionCapture
 
 # You can also specify a state estimator. This is optional. If no state estimator is supplied it will default to null. 
-from rotorpy.estimators.wind_ukf import WindUKF
+try:
+      from rotorpy.estimators.wind_ukf import WindUKF
+except:
+      print("FilterPy is not installed in the basic version of rotorpy. Please install the filter version of rotorpy by running pip install rotorpy[filter]")
 
 # Also, worlds are how we construct obstacles. The following class contains methods related to constructing these maps. 
 from rotorpy.world import World

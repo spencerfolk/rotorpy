@@ -401,7 +401,7 @@ class Multirotor(object):
             # Angular control; vector units of N*m.
             cmd_moment = self.inertia @ (-self.kp_att*att_err - self.kd_att*state['w']) + np.cross(state['w'], self.inertia@state['w'])
         else:
-            raise ValueError("Invalid control abstraction selected. Options are: cmd_motor_speeds, cmd_motor_thrusts, cmd_ctbm, cmd_ctbr, cmd_ctatt, cmd_vel")
+            raise ValueError("Invalid control abstraction selected. Options are: cmd_motor_speeds, cmd_motor_thrusts, cmd_ctbm, cmd_ctbr, cmd_ctatt, cmd_vel, cmd_acc")
 
         # Take the commanded thrust and body moments and convert them to motor speeds
         TM = np.concatenate(([cmd_thrust], cmd_moment))               # Concatenate thrust and moment into an array

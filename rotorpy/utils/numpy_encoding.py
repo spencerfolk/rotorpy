@@ -73,38 +73,3 @@ class NumpyJSONEncoder(json.JSONEncoder):
         else:
             indent = self.indent
         return " " * self.indentation_level * indent
-
-if __name__ == '__main__':
-    import copy
-
-    # Example data.
-    data = {
-        'bounds': {'extents': [0, 5.0, 0, 2.0, 0, 13.0]},
-        'blocks': [
-            {'extents': [2, 3, 0.0, 2, 0.0, 10.0], 'color': [1, 0, 0]},
-            {'extents': [2, 3, 0.0, 2, 0.0, 10.0], 'color': [1, 0, 0]},
-            {'extents': [2, 3, 0.0, 2, 0.0, 10.0], 'color': [1, 0, 0]},
-            {'extents': [2, 3, 0.0, 2, 0.0, 10.0], 'color': [1, 0, 0]},
-            {'extents': [2, 3, 0.0, 2, 0.0, 10.0]},
-            {'extents': [2, 3, 0.0, 2, 0.0, 10.0]},
-            {'extents': [2, 3, 0.0, 2, 0.0, 10.0]}],
-        'start': np.array([0, 0, 1]),
-        'goal': np.array([4, 0, 2]),
-        'resolution': np.array([0.25, 0.25, 0.5]),
-        'margin': 0.1,
-        'expected_path_length': 20.52
-    }
-    data['more'] = copy.deepcopy(data)
-
-    # Print JSON string to terminal.
-    print(json.dumps(data, cls=NumpyJSONEncoder, indent=4))
-
-    # Using 'dump' not yet supported.
-    with open('example.json', 'w') as file:
-        file.write(json.dumps(data, cls=NumpyJSONEncoder, indent=4))
-
-    with open('example.json') as file:
-        data_out = json.load(file)
-    data_out = to_ndarray(data_out)
-
-    print(data_out)

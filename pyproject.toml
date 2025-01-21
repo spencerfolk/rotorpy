@@ -23,7 +23,6 @@ classifiers = [
 dependencies = [
     'cvxopt',
     'matplotlib',
-    'filterpy == 1.4.5',
     'numpy',
     'scipy',
     'pandas',
@@ -34,6 +33,15 @@ dependencies = [
 [project.optional-dependencies]
 learning = [
     'stable_baselines3'
+]
+dev = [
+    'pytest'
+]
+testing = [
+    'pytest',
+]
+filter = [
+    'filterpy == 1.4.5',
 ]
 
 [project.urls]
