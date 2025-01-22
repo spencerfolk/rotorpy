@@ -62,7 +62,7 @@ class SE3Control(object):
         k = self.k_m/self.k_eta  # Ratio of torque to thrust coefficient. 
 
         # Below is an automated generation of the control allocator matrix. It assumes that all thrust vectors are aligned
-        # with the z axis and that the "sign" of each rotor yaw moment alternates starting with positive for r1. 'TM' = "thrust and moments"
+        # with the z axis.
         self.f_to_TM = np.vstack((np.ones((1,self.num_rotors)),
                                   np.hstack([np.cross(self.rotor_pos[key],np.array([0,0,1])).reshape(-1,1)[0:2] for key in self.rotor_pos]), 
                                  (k * self.rotor_dir).reshape(1,-1)))

@@ -120,7 +120,7 @@ class Multirotor(object):
         k = self.k_m/self.k_eta  # Ratio of torque to thrust coefficient. 
 
         # Below is an automated generation of the control allocator matrix. It assumes that all thrust vectors are aligned
-        # with the z axis and that the "sign" of each rotor yaw moment alternates starting with positive for r1.
+        # with the z axis.
         self.f_to_TM = np.vstack((np.ones((1,self.num_rotors)),np.hstack([np.cross(self.rotor_pos[key],np.array([0,0,1])).reshape(-1,1)[0:2] for key in self.rotor_pos]), (k * self.rotor_dir).reshape(1,-1)))
         self.TM_to_f = np.linalg.inv(self.f_to_TM)
 
@@ -202,6 +202,7 @@ class Multirotor(object):
 
         # Add noise to the motor speed measurement
         state['rotor_speeds'] += np.random.normal(scale=np.abs(self.motor_noise), size=(self.num_rotors,))
+        state['rotor_speeds'] = np.clip(state['rotor_speeds'], self.rotor_speed_min, self.rotor_speed_max)
 
         return state
 
@@ -405,7 +406,7 @@ class Multirotor(object):
             # Angular control; vector units of N*m.
             cmd_moment = self.inertia @ (-self.kp_att*att_err - self.kd_att*state['w']) + np.cross(state['w'], self.inertia@state['w'])
         else:
-            raise ValueError("Invalid control abstraction selected. Options are: cmd_motor_speeds, cmd_motor_thrusts, cmd_ctbm, cmd_ctbr, cmd_ctatt, cmd_vel")
+            raise ValueError("Invalid control abstraction selected. Options are: cmd_motor_speeds, cmd_motor_thrusts, cmd_ctbm, cmd_ctbr, cmd_ctatt, cmd_vel, cmd_acc")
 
         # Take the commanded thrust and body moments and convert them to motor speeds
         TM = np.concatenate(([cmd_thrust], cmd_moment))               # Concatenate thrust and moment into an array

@@ -158,7 +158,7 @@ class World(object):
         c.transform(position=(xmin, ymin, zmin))
         return list(c.artists)
 
-    def draw(self, ax, facecolor=None, edgecolor=None, alpha=0.6):
+    def draw(self, ax, alpha=None, edgecolor=None, facecolor=None):
         """
         Draw world onto existing Axes3D axes and return artists corresponding to the
         blocks.
@@ -174,14 +174,20 @@ class World(object):
         """
         bounds_artists = self.draw_empty_world(ax)
 
+        if alpha is None:
+            alpha = 0.7
+        
+        if edgecolor is None:
+            edgecolor = 'k'
+
         block_artists = []
         for b in self.world.get('blocks', []):
             (xmin, xmax, ymin, ymax, zmin, zmax) = b['extents']
             if facecolor is None:
-                facecolor = b.get('color', None)
-            if edgecolor is None:
-                edgecolor = 'k'
-            c = Cuboid(ax, xmax-xmin, ymax-ymin, zmax-zmin, alpha=alpha, linewidth=1, edgecolors=edgecolor, facecolors=facecolor)
+                fc = b.get('color', None)
+            else:
+                fc = facecolor
+            c = Cuboid(ax, xmax-xmin, ymax-ymin, zmax-zmin, alpha=alpha, linewidth=1, edgecolors=edgecolor, facecolors=fc)
             c.transform(position=(xmin, ymin, zmin))
             block_artists.extend(c.artists)
         return bounds_artists + block_artists

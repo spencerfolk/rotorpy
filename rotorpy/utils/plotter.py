@@ -2,7 +2,6 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 import matplotlib.pyplot as plt
 
-# from rotorpy.utils.axes3ds import Axes3Ds
 from rotorpy.utils.animate import animate
 
 import os
@@ -194,8 +193,9 @@ class Plotter():
             if plot_imu:
                 fig_imu.savefig(os.path.join(root_path, fname+'_imu.png'))
             if plot_estimator:
-                fig_filter.savefig(os.path.join(root_path, fname+'_filter.png'))
-                fig_cov.savefig(os.path.join(root_path, fname+'_cov.png'))
+                if self.estimator_exists:
+                    fig_filter.savefig(os.path.join(root_path, fname+'_filter.png'))
+                    fig_cov.savefig(os.path.join(root_path, fname+'_cov.png'))
 
         plt.show()
 
@@ -359,11 +359,17 @@ def plot_map(ax, world_data, equal_aspect=True, color=None, edgecolor=None, alph
         ymin = block['extents'][2]
         ymax = block['extents'][3]
         if color is None:
-            building_color = tuple(block['color'])
+            try:
+                building_color = tuple(block['color'])
+            except:
+                building_color = 'k'
         else:
             building_color = color
         if edgecolor is None:
-            building_edge_color = tuple(block['color'])
+            try:
+                building_edge_color = tuple(block['color'])
+            except:
+                building_edge_color = 'k'
         else:
             building_edge_color = edgecolor
         block_patch = Rectangle((xmin, ymin), (xmax-xmin), (ymax-ymin), linewidth=1, edgecolor=building_edge_color, facecolor=building_color, alpha=alpha, fill=True)

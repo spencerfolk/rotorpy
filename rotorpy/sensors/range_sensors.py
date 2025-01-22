@@ -124,6 +124,17 @@ class TwoDRangeSensor():
         distances = np.ones((self.N_rays,))*1e5   # Begin with 
         for object_edges in self.world_edges:
             # Object edges is a list of tuples, each tuple describing one of the four edges
+
+            # Check if the object is within the field of view of the sensor
+            xmin = object_edges[0][0]
+            xmax = object_edges[1][0]
+            ymin = object_edges[0][1]
+            ymax = object_edges[2][1]
+
+            if (xmin > x + self.Dmax) or (xmax < x - self.Dmax) or (ymin > y + self.Dmax) or (ymax < y - self.Dmax):  
+                # Don't check if the object is outside the field of view
+                continue
+
             for edge in object_edges:
                 # First collect the coordinates for point 1 and 2 corresponding to this edge
                 x1 = edge[0]
