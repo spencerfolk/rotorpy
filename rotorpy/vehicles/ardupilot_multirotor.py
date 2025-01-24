@@ -120,8 +120,7 @@ class Ardupilot(Multirotor):
             3,
         )
 
-        _, _, heading = R.from_quat(state["q"]).as_euler("XYZ")
-        state["q"] = R.from_euler("Z", -heading).as_quat()
+        state["q"] = flatten_attitude(state["q"])
 
         return state
 
@@ -217,6 +216,26 @@ class Ardupilot(Multirotor):
             self.ap_link.post_update(self.sensor_data, self.t)
             elapsed_time = time.time() - start_time
             time.sleep(max(0, interval - elapsed_time))
+
+def flatten_attitude(quaternion : List[float]) -> List[float]:
+    """
+    Set roll and pitch to 0 while keeping yaw unchanged.
+    
+    Parameters:
+        quaternion (array-like): Quaternion [x, y, z, w] representing the quadrotor's attitude.
+    
+    Returns:
+        numpy.ndarray: New quaternion with roll and pitch set to 0.
+    """
+
+    # Extract Euler angles in the 'XYZ' (roll, pitch, heading) convention wrt the world frame
+    _, _, heading = R.from_quat(quaternion).as_euler('XYZ', degrees=False)
+    
+    # Create a new rotation object with roll and pitch set to 0
+    flattened_rotation = R.from_euler('Z', heading, degrees=False)
+    
+    # Convert the new rotation back to a quaternion
+    return flattened_rotation.as_quat()
 
 if __name__ == '__main__':
     r = R.from_euler('y', 0, degrees=True)
