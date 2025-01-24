@@ -28,6 +28,7 @@ dependencies = [
     'pandas',
     'tqdm',
     'gymnasium',
+    'ArduPilotPlugin @ git+https://github.com/TomerTip/PyArduPilotPlugin.git'
 ]
 
 [project.optional-dependencies]
