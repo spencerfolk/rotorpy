@@ -3,8 +3,6 @@ It sends the state to the SITL to verify that the conversion is correct.
 """
 import copy
 from dataclasses import asdict, dataclass, field
-import threading
-import time
 from typing import Dict, List
 
 import numpy as np
@@ -17,7 +15,7 @@ from ArduPilotPlugin import ArduPilotPlugin
 
 PWM_MIN = 1100
 PWM_MAX = 1900
-SEND_RATE_HZ = 600
+SEND_RATE_HZ = 1000
 
 @dataclass
 class ControlCommand:
@@ -64,7 +62,7 @@ class Ardupilot(Multirotor):
         self._enable_ground = enable_ground
         self._ardupilot_control = ardupilot_control
         statedot = {'vdot' : np.zeros(3,), 'wdot' : np.zeros(3,)}
-        self.t = 0
+        self.t = 0.0
         self.imu = Imu()
         self.__enable_imu_noise = enable_imu_noise
 
@@ -74,10 +72,9 @@ class Ardupilot(Multirotor):
 
         self._control_cmd = ControlCommand()   
 
-        self._sitl_output_thread = threading.Thread(target=self._send_loop, name='SITL_out')
-        self._sitl_output_thread.start()
 
     def step(self, state, control, t_step):
+        received, pwm = self.ap_link.pre_update(self.t)
         if self._ardupilot_control:
             control = {'cmd_motor_speeds': self._motor_cmd_to_omega(self._control_cmd.cmd_motor_speeds)}
 
@@ -90,7 +87,11 @@ class Ardupilot(Multirotor):
         self.t += t_step
 
         self.sensor_data = self._create_sensor_data(state, statedot, self.imu, self.__enable_imu_noise)
-
+        
+        self.ap_link.post_update(self.sensor_data, self.t)
+        if received: # TODO: is this being handled correctly?
+            self._control_cmd.cmd_motor_speeds = list(pwm[0:4]) # type: ignore
+        
         return state
 
     def _handle_vehicle_on_ground(
@@ -193,29 +194,6 @@ class Ardupilot(Multirotor):
             zacc=a_frd[2],
         )
 
-    def _send_loop(self):
-        """
-        Ardupilot needs to receive packets from the simulator at a constant rate:
-        As per https://github.com/ArduPilot/ardupilot/blob/f236a6c6fcac112a2271763a344634302d65da82/libraries/SITL/examples/JSON/readme.md:
-        
-        ```
-        The frame rate represents the time step the simulation should take, 
-        this can be changed with the SIM_RATE_HZ ArduPilot parameter. 
-        The physics backend is free to ignore this value, 
-        a maximum time step size would typically be set. 
-        The SIM_RATE_HZ should value be kept above the vehicle loop rate, 
-        by default this 400hz on copter and quadplanes and 50 hz on plane and rover.
-        ```
-        """
-        interval = 1.0 / SEND_RATE_HZ
-        while True:
-            start_time = time.time()
-            received, pwm = self.ap_link.pre_update(self.t)
-            if received: # TODO: is this being handled correctly?
-                self._control_cmd.cmd_motor_speeds = list(pwm[0:4]) # type: ignore
-            self.ap_link.post_update(self.sensor_data, self.t)
-            elapsed_time = time.time() - start_time
-            time.sleep(max(0, interval - elapsed_time))
 
 def flatten_attitude(quaternion : List[float]) -> List[float]:
     """
