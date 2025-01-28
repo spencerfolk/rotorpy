@@ -28,7 +28,6 @@ dependencies = [
     'pandas',
     'tqdm',
     'gymnasium',
-    'ArduPilotPlugin @ git+https://github.com/TomerTip/PyArduPilotPlugin.git'
 ]
 
 [project.optional-dependencies]
@@ -45,6 +44,10 @@ testing = [
 ]
 filter = [
     'filterpy == 1.4.5',
+]
+ardupilot = [
+    'ArduPilotPlugin @ git+https://github.com/TomerTip/PyArduPilotPlugin.git',
+    'timed_count' # Only for example
 ]
 
 [project.urls]
