@@ -12,7 +12,6 @@ import roma
 """
 Multirotor models, batched using PyTorch
 """
-
 def quat_dot(quat, omega):
     """
     Parameters:
@@ -28,7 +27,8 @@ def quat_dot(quat, omega):
     (q0, q1, q2, q3) = (quat[...,0], quat[...,1], quat[...,2], quat[...,3])
     G = torch.stack([q3, q2, -q1, -q0,
                    -q2, q3, q0, -q1,
-                   q1, -q0, q3, -q2], dim=0).view((b, 3, 4))
+                   q1, -q0, q3, -q2], dim=1).view((b, 3, 4))
+
     # G = torch.tensor([[ q3,  q2, -q1, -q0],
     #               [-q2,  q3,  q0, -q1],
     #               [ q1, -q0,  q3, -q2]])
@@ -86,7 +86,7 @@ class BatchedMultirotor(object):
         self.num_rotors      = quad_params['num_rotors']
         self.rotor_pos       = quad_params['rotor_pos']
 
-        self.rotor_dir       = quad_params['rotor_directions']
+        self.rotor_dir       = torch.from_numpy(quad_params['rotor_directions'])
 
         self.extract_geometry()
 
@@ -110,10 +110,10 @@ class BatchedMultirotor(object):
                                  [self.Ixz, self.Iyz, self.Izz]]).unsqueeze(0)  # will be useful to add a batch dim
         self.rotor_drag_matrix = torch.tensor([[self.k_d,   0,                 0],
                                            [0,          self.k_d,          0],
-                                           [0,          0,          self.k_z]]).unsqueeze(0)
+                                           [0,          0,          self.k_z]]).float()
         self.drag_matrix = torch.tensor([[self.c_Dx,    0,          0],
                                      [0,            self.c_Dy,  0],
-                                     [0,            0,          self.c_Dz]]).unsqueeze(0)
+                                     [0,            0,          self.c_Dz]])
         self.g = 9.81 # m/s^2
 
         self.inv_inertia = torch.linalg.inv(self.inertia)
@@ -182,7 +182,7 @@ class BatchedMultirotor(object):
 
     # TODO(hersh500): add the ability to selectively step certain drones. This will be useful if some drones
     # crash or finish their trajectories earlier than others.
-    def step(self, state, control, t_step):
+    def step(self, state, control, t_step, debug=False):
         """
         Integrate dynamics forward from state given constant control for time t_step.
         """
@@ -194,29 +194,30 @@ class BatchedMultirotor(object):
 
         # Form autonomous ODE for constant inputs and integrate one time step.
         def s_dot_fn(t, s):
-            return self._s_dot_fn(t, s, cmd_rotor_speeds)
+            return self._s_dot_fn(t, s, cmd_rotor_speeds, debug)
         s = BatchedMultirotor._pack_state(state, self.num_drones)
 
         # Option 1 - RK45 integration
         # sol = scipy.integrate.solve_ivp(s_dot_fn, (0, t_step), s, first_step=t_step)
         sol = odeint(s_dot_fn, s, t=torch.tensor([0.0, t_step]))
-        s = sol['y'][:,-1]
+        # s = sol['y'][:,-1]
+        s = sol[-1,:]
         # Option 2 - Euler integration
         # s = s + s_dot_fn(0, s) * t_step  # first argument doesn't matter. It's time invariant model
 
         state = BatchedMultirotor._unpack_state(s)
 
         # Re-normalize unit quaternion.
-        state['q'] = state['q'] / norm(state['q'])
+        state['q'] = state['q'] / torch.norm(state['q'], dim=-1).unsqueeze(-1)
 
         # Add noise to the motor speed measurement
-        state['rotor_speeds'] += torch.normal(mean=torch.zeros(self.num_drones),
-                                              std=torch.ones(self.num_drones) * np.abs(self.motor_noise))
+        state['rotor_speeds'] += torch.normal(mean=torch.zeros(self.num_rotors),
+                                              std=torch.ones(self.num_rotors) * np.abs(self.motor_noise))
         state['rotor_speeds'] = torch.clip(state['rotor_speeds'], self.rotor_speed_min, self.rotor_speed_max)
 
         return state
 
-    def _s_dot_fn(self, t, s, cmd_rotor_speeds):
+    def _s_dot_fn(self, t, s, cmd_rotor_speeds, debug=False):
         """
         Compute derivative of state for quadrotor given fixed control inputs as
         an autonomous ODE.
@@ -225,6 +226,8 @@ class BatchedMultirotor(object):
         state = BatchedMultirotor._unpack_state(s)
 
         rotor_speeds = state['rotor_speeds']
+        if debug:
+            print(f"batched multirotor rotor speeds: {rotor_speeds}")
         inertial_velocity = state['v']
         wind_velocity = state['wind']
 
@@ -233,6 +236,8 @@ class BatchedMultirotor(object):
 
         # Rotor speed derivative
         rotor_accel = (1/self.tau_m)*(cmd_rotor_speeds - rotor_speeds)
+        if debug:
+            print(f"multirotor s_dot_fn: rotor_accel: {rotor_accel}")
 
         # Position derivative.
         x_dot = state['v']
@@ -244,19 +249,27 @@ class BatchedMultirotor(object):
         body_airspeed_vector = R.transpose(1, 2)@(inertial_velocity - wind_velocity).unsqueeze(-1)
 
         body_airspeed_vector = body_airspeed_vector.squeeze(-1)
+        if debug:
+            print(f"multirotor s_dot_fn: q_dot: {q_dot}")  # INCORRECT
+            print(f"multirotor s_dot_fn: body_airspeed_vector: {body_airspeed_vector}")  # CORRECT
+
         # Compute total wrench in the body frame based on the current rotor speeds and their location w.r.t. CoM
         (FtotB, MtotB) = self.compute_body_wrench(state['w'], rotor_speeds, body_airspeed_vector)
 
         # Rotate the force from the body frame to the inertial frame
-        Ftot = R@FtotB
+        Ftot = R@FtotB.unsqueeze(-1)
 
         # Velocity derivative.
-        v_dot = (self.weight + Ftot) / self.mass
+        v_dot = (self.weight + Ftot.squeeze(-1)) / self.mass
 
         # Angular velocity derivative.
         w = state['w']
-        w_hat = BatchedMultirotor.hat_map(w)
-        w_dot = self.inv_inertia @ (MtotB - w_hat @ (self.inertia @ w))
+        w_hat = BatchedMultirotor.hat_map(w).permute(2, 0, 1)
+        w_dot = self.inv_inertia @ (MtotB - (w_hat.float() @ (self.inertia @ w.unsqueeze(-1))).squeeze(-1)).unsqueeze(-1)
+        if debug:
+            print(f"batched multirotor FtotB: {FtotB}") # CORRECT
+            print(f"batched multirotor w_dot: {w_dot}") # CORRECT
+            print(f"batched multirotor v_dot: {v_dot}") # CORRECT
 
         # NOTE: the wind dynamics are currently handled in the wind_profile object. 
         # The line below doesn't do anything, as the wind state is assigned elsewhere. 
@@ -264,17 +277,16 @@ class BatchedMultirotor(object):
 
         # Pack into vector of derivatives.
         s_dot = torch.zeros((self.num_drones, 16+self.num_rotors,))
-        s_dot[0:3]   = x_dot
-        s_dot[3:6]   = v_dot
-        s_dot[6:10]  = q_dot
-        s_dot[10:13] = w_dot
-        s_dot[13:16] = wind_dot
-        s_dot[16:]   = rotor_accel
+        s_dot[:,0:3]   = x_dot
+        s_dot[:,3:6]   = v_dot
+        s_dot[:,6:10]  = q_dot
+        s_dot[:,10:13] = w_dot.squeeze(-1)
+        s_dot[:,13:16] = wind_dot
+        s_dot[:,16:]   = rotor_accel
 
         return s_dot
 
-    # TODO: vectorize
-    def compute_body_wrench(self, body_rates, rotor_speeds, body_airspeed_vector):
+    def compute_body_wrench(self, body_rates, rotor_speeds, body_airspeed_vector, debug=False):
         """
         Computes the wrench acting on the rigid body based on the rotor speeds for thrust and airspeed 
         for aerodynamic forces. 
@@ -284,38 +296,48 @@ class BatchedMultirotor(object):
         """
 
         # Get the local airspeeds for each rotor
-        local_airspeeds = body_airspeed_vector.unsqueeze(-1) + BatchedMultirotor.hat_map(body_rates)@(self.rotor_geometry.transpose(1,2))
+        local_airspeeds = body_airspeed_vector.unsqueeze(-1) + (BatchedMultirotor.hat_map(body_rates).permute(2, 0, 1))@(self.rotor_geometry.transpose(1,2))
 
         # Compute the thrust of each rotor, assuming that the rotors all point in the body z direction!
-        # T = np.array([0, 0, self.k_eta])[:, np.newaxis]*rotor_speeds**2
-
-        # result of this is a (b_dim, 4, 3) quantity?
-        # TODO(hersh500): check this!
-        T = torch.tensor([[0, 0, self.k_eta]]).unsqueeze(-1)*rotor_speeds**2
+        T = torch.zeros(self.num_drones, 3, 4)
+        T[...,-1,:] = self.k_eta * rotor_speeds**2
 
         # Add in aero wrenches (if applicable)
-        # TODO(hersh500): if batched correctly, all these operations should just work!
-        # Run through debugger, check!
         if self.aero:
             # Parasitic drag force acting at the CoM
-            D = -BatchedMultirotor._norm(body_airspeed_vector)*self.drag_matrix@body_airspeed_vector
+            tmp = self.drag_matrix.unsqueeze(0)@(body_airspeed_vector).unsqueeze(-1)
+            D = -BatchedMultirotor._norm(body_airspeed_vector).unsqueeze(-1)*tmp.squeeze()
             # Rotor drag (aka H force) acting at each propeller hub.
-            H = -rotor_speeds*(self.rotor_drag_matrix@local_airspeeds)
+            tmp = self.rotor_drag_matrix.unsqueeze(0)@local_airspeeds.float()
+            H = -rotor_speeds.unsqueeze(1)*tmp
             # Pitching flapping moment acting at each propeller hub.
-            M_flap = -self.k_flap*rotor_speeds*((BatchedMultirotor.hat_map(local_airspeeds.T).transpose(2, 0, 1))@np.array([0,0,1])).T
+            M_flap = BatchedMultirotor.hat_map(local_airspeeds.transpose(1, 2).reshape(self.num_drones*4, 3))
+            M_flap = M_flap.permute(2, 0, 1).reshape(self.num_drones, 4, 3, 3).float()
+            M_flap = M_flap@torch.tensor([0,0,1.0])
+            M_flap = -self.k_flap*rotor_speeds.unsqueeze(1)*M_flap.transpose(-1, -2)
         else:
-            D = np.zeros(3,)
-            H = np.zeros((3,self.num_rotors))
-            M_flap = np.zeros((3,self.num_rotors))
+            D = torch.zeros(self.num_drones, 3)
+            H = torch.zeros((self.num_drones, 3, self.num_rotors))
+            M_flap = torch.zeros((self.num_drones, 3,self.num_rotors))
 
         # Compute the moments due to the rotor thrusts, rotor drag (if applicable), and rotor drag torques
         # install opt-einsum https://pytorch.org/docs/stable/generated/torch.einsum.html
-        M_force = -torch.einsum('ijk, ik->j', BatchedMultirotor.hat_map(self.rotor_geometry), T+H)
-        M_yaw = self.rotor_dir*(torch.tensor([0, 0, self.k_m]).unsqueeze(-1)*rotor_speeds**2)
+        M_force = -torch.einsum('bijk, bik->bj', BatchedMultirotor.hat_map(self.rotor_geometry.squeeze()).unsqueeze(0).float(), T+H)
+        M_yaw = torch.zeros(self.num_drones, 3, 4)
+        M_yaw[...,-1,:] = self.rotor_dir * self.k_m * rotor_speeds**2
+
+        if debug:
+            print(f"batched multirotor compute_body_wrench: local_airspeeds: {local_airspeeds}")  # CORRECT
+            print(f"batched multirotor compute_body_wrench: T: {T}")  # CORRECT
+            print(f"batched multirotor compute_body_wrench: D: {D}")  # CORRECT
+            print(f"batched multirotor compute_body_wrench: H: {H}")  # CORRCT
+            print(f"batched multirotor compute_body_wrench: M_flap: {M_flap}")
+            print(f"batched multirotor compute_body_wrench: M_force: {M_force}")  # CORRECT
+            print(f"batched multirotor compute_body_wrench: M_yaw: {M_yaw}")  # CORRECT
 
         # Sum all elements to compute the total body wrench
         FtotB = torch.sum(T + H, dim=2) + D
-        MtotB = M_force + np.sum(M_yaw + M_flap, axis=1)
+        MtotB = M_force + torch.sum(M_yaw + M_flap, dim=2)
 
         return (FtotB, MtotB)
 
@@ -329,109 +351,9 @@ class BatchedMultirotor(object):
         if self.control_abstraction == 'cmd_motor_speeds':
             # The controller directly controls motor speeds, so command that. 
             return control['cmd_motor_speeds']
-
-        elif self.control_abstraction == 'cmd_motor_thrusts':
-            # The controller commands individual motor forces. 
-            cmd_motor_speeds = control['cmd_motor_thrusts'] / self.k_eta                        # Convert to motor speeds from thrust coefficient. 
-            return torch.sign(cmd_motor_speeds) * torch.sqrt(torch.abs(cmd_motor_speeds))
-
-        elif self.control_abstraction == 'cmd_ctbm':
-            # The controller commands collective thrust and moment on each axis. 
-            cmd_thrust = control['cmd_thrust']
-            cmd_moment = control['cmd_moment']  
-
-        elif self.control_abstraction == 'cmd_ctbr':
-            # The controller commands collective thrust and body rates on each axis. 
-
-            cmd_thrust = control['cmd_thrust']
-
-            # First compute the error between the desired body rates and the actual body rates given by state. 
-            w_err = state['w'] - control['cmd_w']
-
-            # Computed commanded moment based on the attitude error and body rate error
-            wdot_cmd = -self.k_w*w_err
-            cmd_moment = self.inertia@wdot_cmd
-
-            # Now proceed with the cmd_ctbm formulation.
-
-        elif self.control_abstraction == 'cmd_vel':
-            # The controller commands a velocity vector. 
-            
-            # Get the error in the current velocity. 
-            v_err = state['v'] - control['cmd_v']
-
-            # Get desired acceleration based on P control of velocity error. 
-            a_cmd = -self.k_v*v_err
-
-            # Get desired force from this acceleration. 
-            F_des = self.mass*(a_cmd + np.array([0, 0, self.g]))
-
-            R = Rotation.from_quat(state['q']).as_matrix()
-            b3 = R @ np.array([0, 0, 1])
-            cmd_thrust = np.dot(F_des, b3)
-
-            # Follow rest of SE3 controller to compute cmd moment. 
-
-            # Desired orientation to obtain force vector.
-            b3_des = F_des/np.linalg.norm(F_des)
-            c1_des = np.array([1, 0, 0])
-            b2_des = np.cross(b3_des, c1_des)/np.linalg.norm(np.cross(b3_des, c1_des))
-            b1_des = np.cross(b2_des, b3_des)
-            R_des = np.stack([b1_des, b2_des, b3_des]).T
-
-            # Orientation error.
-            S_err = 0.5 * (R_des.T @ R - R.T @ R_des)
-            att_err = np.array([-S_err[1,2], S_err[0,2], -S_err[0,1]])
-
-            # Angular control; vector units of N*m.
-            cmd_moment = self.inertia @ (-self.kp_att*att_err - self.kd_att*state['w']) + np.cross(state['w'], self.inertia@state['w'])
-
-        elif self.control_abstraction == 'cmd_ctatt':
-            # The controller commands the collective thrust and attitude.
-
-            cmd_thrust = control['cmd_thrust']
-
-            # Compute the shape error from the current attitude and the desired attitude. 
-            R = Rotation.from_quat(state['q']).as_matrix()
-            R_des = Rotation.from_quat(control['cmd_q']).as_matrix()
-
-            S_err = 0.5 * (R_des.T @ R - R.T @ R_des)
-            att_err = np.array([-S_err[1,2], S_err[0,2], -S_err[0,1]])
-
-            # Compute command moment based on attitude error. 
-            cmd_moment = self.inertia @ (-self.kp_att*att_err - self.kd_att*state['w']) + np.cross(state['w'], self.inertia@state['w'])
-        
-        elif self.control_abstraction == 'cmd_acc':
-            # The controller commands an acceleration vector (or thrust vector). This is equivalent to F_des in the SE3 controller. 
-            F_des = control['cmd_acc']*self.mass
-
-            R = Rotation.from_quat(state['q']).as_matrix()
-            b3 = R @ np.array([0, 0, 1])
-            cmd_thrust = np.dot(F_des, b3)
-
-            # Desired orientation to obtain force vector.
-            b3_des = F_des/np.linalg.norm(F_des)
-            c1_des = np.array([1, 0, 0])
-            b2_des = np.cross(b3_des, c1_des)/np.linalg.norm(np.cross(b3_des, c1_des))
-            b1_des = np.cross(b2_des, b3_des)
-            R_des = np.stack([b1_des, b2_des, b3_des]).T
-
-            # Orientation error.
-            S_err = 0.5 * (R_des.T @ R - R.T @ R_des)
-            att_err = np.array([-S_err[1,2], S_err[0,2], -S_err[0,1]])
-
-            # Angular control; vector units of N*m.
-            cmd_moment = self.inertia @ (-self.kp_att*att_err - self.kd_att*state['w']) + np.cross(state['w'], self.inertia@state['w'])
         else:
-            raise ValueError("Invalid control abstraction selected. Options are: cmd_motor_speeds, cmd_motor_thrusts, cmd_ctbm, cmd_ctbr, cmd_ctatt, cmd_vel, cmd_acc")
+            raise ValueError("Invalid control abstraction selected. Options are: cmd_motor_speeds")
 
-        # Take the commanded thrust and body moments and convert them to motor speeds
-        TM = np.concatenate(([cmd_thrust], cmd_moment))               # Concatenate thrust and moment into an array
-        cmd_motor_forces = self.TM_to_f @ TM                                                # Convert to cmd_motor_forces from allocation matrix
-        cmd_motor_speeds = cmd_motor_forces / self.k_eta                                    # Convert to motor speeds from thrust coefficient. 
-        cmd_motor_speeds = np.sign(cmd_motor_speeds) * np.sqrt(np.abs(cmd_motor_speeds))
-
-        return cmd_motor_speeds
 
     @classmethod
     def rotate_k(cls, q):
@@ -453,7 +375,7 @@ class BatchedMultirotor(object):
         if len(s.shape) > 1:  # Vectorized implementation
             return torch.from_numpy(np.array([[ np.zeros(s.shape[0]), -s[:,2],  s[:,1]],
                              [ s[:,2],     np.zeros(s.shape[0]), -s[:,0]],
-                             [-s[:,1],  s[:,0],     np.zeros(s.shape[0])]])).view(s.shape[0], 3,3)
+                             [-s[:,1],  s[:,0],     np.zeros(s.shape[0])]]))
         else:
             return torch.from_numpy(np.array([[    0, -s[2],  s[1]],
                              [ s[2],     0, -s[0]],
@@ -496,3 +418,23 @@ class BatchedMultirotor(object):
         """
         state = {'x':s[...,0:3], 'v':s[...,3:6], 'q':s[...,6:10], 'w':s[...,10:13], 'wind':s[...,13:16], 'rotor_speeds':s[...,16:]}
         return state
+
+
+def merge_rotorpy_states(states):
+    array_keys = ["x", "v", "q", "w", "wind", "rotor_speeds"]
+    merged_states = {}
+    for key in array_keys:
+        merged_states[key] = torch.cat([torch.from_numpy(f[key]).unsqueeze(0).float() for f in states], dim=0)
+    return merged_states
+
+
+def merge_flat_outputs(flat_outputs, device):
+    # these are the important keys that the controller uses
+    array_keys = ["x", "x_dot", 'x_ddot']
+    scalar_keys = ["yaw", "yaw_dot"]
+    merged_flat_outputs = {}
+    for key in array_keys:
+        merged_flat_outputs[key] = torch.cat([torch.from_numpy(f[key]).unsqueeze(0).float() for f in flat_outputs], dim=0).float().to(device)
+    for key in scalar_keys:
+        merged_flat_outputs[key] = torch.from_numpy(np.array([f[key] for f in flat_outputs])).float().to(device)
+    return merged_flat_outputs

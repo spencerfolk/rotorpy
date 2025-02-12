@@ -250,7 +250,7 @@ class SE3ControlBatch(object):
         w_des = torch.stack([torch.zeros_like(yaw_des), torch.zeros_like(yaw_des), flat_outputs['yaw_dot']], dim=-1).to(self.device)
         w_err = states['w'] - w_des
 
-        Iw = self.inertia.unsqueeze(0).float() @ states['w'].unsqueeze(-1)
+        Iw = self.inertia.unsqueeze(0).float() @ states['w'].unsqueeze(-1).float()
         x = -self.kp_att * att_err - self.kd_att * w_err
         u2 = (self.inertia.unsqueeze(0).float() @ x.unsqueeze(-1)).squeeze() + torch.cross(states['w'], Iw.squeeze(), dim=-1)
 

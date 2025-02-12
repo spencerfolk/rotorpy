@@ -29,7 +29,7 @@ dependencies = [
     'tqdm',
     'gymnasium',
     'roma',
-    'torch',
+    'torch[opt-einsum]',
     'torchdiffeq'
 ]
 
