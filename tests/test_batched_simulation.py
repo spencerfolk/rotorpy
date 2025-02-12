@@ -15,7 +15,7 @@ from rotorpy.world import World
 def main():
     device = torch.device("cpu")
     #### Initial Drone States ####
-    num_drones = 1000
+    num_drones = 10
     init_rotor_speed = 1788.53
     x0 = {'x': torch.zeros(num_drones,3),
           'v': torch.zeros(num_drones, 3),
@@ -34,7 +34,7 @@ def main():
      #### Generate Trajectories ####
     world = World({"bounds": {"extents": [-10, 10, -10, 10, -10, 10]}, "blocks": []})
     num_waypoints = 3
-    v_avg_des = 2.0
+    v_avg_des = 3.0
     positions = x0['x']
     trajectories = []
     ref_traj_gen_start_time = time.time()
@@ -52,13 +52,16 @@ def main():
 
     batched_trajs = BatchedMinSnap(trajectories, device=device)
     controller = SE3ControlBatch(quad_params, device=device)
-    vehicle = BatchedMultirotor(quad_params, num_drones, x0)
-    vehicle.motor_noise = 0
+    vehicle = BatchedMultirotor(quad_params, num_drones, x0, device=device)
     print(f"Time to Generate reference trajectories: {time.time() - ref_traj_gen_start_time}")
 
     controller_single = SE3Control(quad_params)
     vehicle_single = Multirotor(quad_params, initial_state=x0_single)
     vehicle_single.motor_noise = 0
+
+    s_test = torch.rand(3, 3)
+    print(vehicle_single.hat_map(s_test[0].numpy()))
+    print(vehicle.hat_map(s_test))
 
     t = 0
     dt = 0.01
@@ -97,7 +100,7 @@ def main():
     dims = ["x", "y", "z"]
     for j, sim_idx in enumerate(which_sim):
         for dimension in range(3):
-            ax[j][dimension].plot([state['x'][sim_idx][dimension] for state in states], label='batched')
+            ax[j][dimension].plot([state['x'][sim_idx][dimension].cpu().numpy() for state in states], label='batched')
             ax[j][dimension].plot([state['x'][dimension] for state in all_seq_states[sim_idx]], label='sequential')
             ax[j][dimension].legend()
             ax[j][dimension].set_ylabel(dims[dimension])

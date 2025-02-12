@@ -8,10 +8,10 @@ from torchdiffeq import odeint
 import time
 import roma
 
-# TODO(hersh500): unit test this
 """
 Multirotor models, batched using PyTorch
 """
+@torch.jit.script
 def quat_dot(quat, omega):
     """
     Parameters:
@@ -29,9 +29,6 @@ def quat_dot(quat, omega):
                    -q2, q3, q0, -q1,
                    q1, -q0, q3, -q2], dim=1).view((b, 3, 4))
 
-    # G = torch.tensor([[ q3,  q2, -q1, -q0],
-    #               [-q2,  q3,  q0, -q1],
-    #               [ q1, -q0,  q3, -q2]])
     quat_dot = 0.5 * torch.transpose(G, 1,2) @ omega.unsqueeze(-1)
     # Augment to maintain unit quaternion.
     quat_err = torch.sum(quat**2, dim=-1) - 1
@@ -61,13 +58,16 @@ class BatchedMultirotor(object):
     def __init__(self, quad_params,
                        num_drones,
                        initial_states,
+                       device,
                        control_abstraction='cmd_motor_speeds',
-                       aero = True,  
+                       aero = True,
                 ):
         """
         Initialize quadrotor physical parameters.
         TODO(hersh500): add support for different drone parameters within a batch.
         """
+
+        self.device = device
 
         # Inertial parameters
         self.mass            = quad_params['mass'] # kg
@@ -86,7 +86,7 @@ class BatchedMultirotor(object):
         self.num_rotors      = quad_params['num_rotors']
         self.rotor_pos       = quad_params['rotor_pos']
 
-        self.rotor_dir       = torch.from_numpy(quad_params['rotor_directions'])
+        self.rotor_dir       = torch.from_numpy(quad_params['rotor_directions']).to(device)
 
         self.extract_geometry()
 
@@ -107,28 +107,32 @@ class BatchedMultirotor(object):
         # Additional constants.
         self.inertia = torch.tensor([[self.Ixx, self.Ixy, self.Ixz],
                                  [self.Ixy, self.Iyy, self.Iyz],
-                                 [self.Ixz, self.Iyz, self.Izz]]).unsqueeze(0)  # will be useful to add a batch dim
+                                 [self.Ixz, self.Iyz, self.Izz]], device=device).unsqueeze(0)  # will be useful to add a batch dim
         self.rotor_drag_matrix = torch.tensor([[self.k_d,   0,                 0],
                                            [0,          self.k_d,          0],
-                                           [0,          0,          self.k_z]]).float()
+                                           [0,          0,          self.k_z]], device=device).float()
         self.drag_matrix = torch.tensor([[self.c_Dx,    0,          0],
                                      [0,            self.c_Dy,  0],
-                                     [0,            0,          self.c_Dz]])
+                                     [0,            0,          self.c_Dz]], device=device).float()
         self.g = 9.81 # m/s^2
 
         self.inv_inertia = torch.linalg.inv(self.inertia)
-        self.weight = torch.tensor([0, 0, -self.mass*self.g])
+        self.weight = torch.tensor([0, 0, -self.mass*self.g], device=device)
 
         # Control allocation
         k = self.k_m/self.k_eta  # Ratio of torque to thrust coefficient. 
 
         # Below is an automated generation of the control allocator matrix. It assumes that all thrust vectors are aligned
         # with the z axis.
-        self.f_to_TM = torch.from_numpy(np.vstack((np.ones((1,self.num_rotors)),np.hstack([np.cross(self.rotor_pos[key],np.array([0,0,1])).reshape(-1,1)[0:2] for key in self.rotor_pos]), (k * self.rotor_dir).reshape(1,-1))))
+        self.f_to_TM = torch.from_numpy(np.vstack((np.ones((1,self.num_rotors)),
+                                                   np.hstack([np.cross(self.rotor_pos[key],
+                                                                       np.array([0,0,1])).reshape(-1,1)[0:2] for key in self.rotor_pos]),
+                                                   (k * self.rotor_dir).reshape(1,-1)))).to(device)
         self.TM_to_f = torch.linalg.inv(self.f_to_TM)
 
         # Set the initial state
         self.initial_states = initial_states
+        assert(initial_states['x'].device == device, "Initial states must already be on the specified device.")
         assert self.initial_states['x'].shape[0] == num_drones
 
         self.control_abstraction = control_abstraction
@@ -140,6 +144,11 @@ class BatchedMultirotor(object):
 
         self.aero = aero
         self.num_drones = num_drones
+
+        # self.compute_body_wrench = torch.jit.trace(self.compute_body_wrench,
+        #                                            (torch.rand((self.num_drones, 3)),
+        #                                            torch.rand(self.num_drones, 4),
+        #                                            torch.rand(self.num_drones, 3)))
 
     def extract_geometry(self):
         """
@@ -154,7 +163,7 @@ class BatchedMultirotor(object):
         for rotor in self.rotor_pos:
             r = self.rotor_pos[rotor]
             self.rotor_geometry = np.vstack([self.rotor_geometry, r])
-        self.rotor_geometry = torch.from_numpy(self.rotor_geometry).unsqueeze(0)  # naive, we could instead build the torch tensor directly.
+        self.rotor_geometry = torch.from_numpy(self.rotor_geometry).unsqueeze(0).to(self.device)  # naive, we could instead build the torch tensor directly.
         return
 
     def statedot(self, state, control, t_step):
@@ -170,7 +179,7 @@ class BatchedMultirotor(object):
         # Form autonomous ODE for constant inputs and integrate one time step.
         def s_dot_fn(t, s):
             return self._s_dot_fn(t, s, cmd_rotor_speeds)
-        s = BatchedMultirotor._pack_state(state, self.num_drones)
+        s = BatchedMultirotor._pack_state(state, self.num_drones, self.device)
         
         s_dot = s_dot_fn(0, s)
         v_dot = s_dot[...,3:6]
@@ -195,11 +204,11 @@ class BatchedMultirotor(object):
         # Form autonomous ODE for constant inputs and integrate one time step.
         def s_dot_fn(t, s):
             return self._s_dot_fn(t, s, cmd_rotor_speeds, debug)
-        s = BatchedMultirotor._pack_state(state, self.num_drones)
+        s = BatchedMultirotor._pack_state(state, self.num_drones, self.device)
 
         # Option 1 - RK45 integration
         # sol = scipy.integrate.solve_ivp(s_dot_fn, (0, t_step), s, first_step=t_step)
-        sol = odeint(s_dot_fn, s, t=torch.tensor([0.0, t_step]))
+        sol = odeint(s_dot_fn, s, t=torch.tensor([0.0, t_step], device=self.device))
         # s = sol['y'][:,-1]
         s = sol[-1,:]
         # Option 2 - Euler integration
@@ -211,8 +220,8 @@ class BatchedMultirotor(object):
         state['q'] = state['q'] / torch.norm(state['q'], dim=-1).unsqueeze(-1)
 
         # Add noise to the motor speed measurement
-        state['rotor_speeds'] += torch.normal(mean=torch.zeros(self.num_rotors),
-                                              std=torch.ones(self.num_rotors) * np.abs(self.motor_noise))
+        state['rotor_speeds'] += torch.normal(mean=torch.zeros(self.num_rotors, device=self.device),
+                                              std=torch.ones(self.num_rotors, device=self.device) * np.abs(self.motor_noise))
         state['rotor_speeds'] = torch.clip(state['rotor_speeds'], self.rotor_speed_min, self.rotor_speed_max)
 
         return state
@@ -273,10 +282,10 @@ class BatchedMultirotor(object):
 
         # NOTE: the wind dynamics are currently handled in the wind_profile object. 
         # The line below doesn't do anything, as the wind state is assigned elsewhere. 
-        wind_dot = torch.zeros((self.num_drones, 3))
+        wind_dot = torch.zeros((self.num_drones, 3), device=self.device)
 
         # Pack into vector of derivatives.
-        s_dot = torch.zeros((self.num_drones, 16+self.num_rotors,))
+        s_dot = torch.zeros((self.num_drones, 16+self.num_rotors,), device=self.device)
         s_dot[:,0:3]   = x_dot
         s_dot[:,3:6]   = v_dot
         s_dot[:,6:10]  = q_dot
@@ -299,7 +308,7 @@ class BatchedMultirotor(object):
         local_airspeeds = body_airspeed_vector.unsqueeze(-1) + (BatchedMultirotor.hat_map(body_rates).permute(2, 0, 1))@(self.rotor_geometry.transpose(1,2))
 
         # Compute the thrust of each rotor, assuming that the rotors all point in the body z direction!
-        T = torch.zeros(self.num_drones, 3, 4)
+        T = torch.zeros(self.num_drones, 3, 4, device=self.device)
         T[...,-1,:] = self.k_eta * rotor_speeds**2
 
         # Add in aero wrenches (if applicable)
@@ -316,14 +325,14 @@ class BatchedMultirotor(object):
             M_flap = M_flap@torch.tensor([0,0,1.0])
             M_flap = -self.k_flap*rotor_speeds.unsqueeze(1)*M_flap.transpose(-1, -2)
         else:
-            D = torch.zeros(self.num_drones, 3)
-            H = torch.zeros((self.num_drones, 3, self.num_rotors))
-            M_flap = torch.zeros((self.num_drones, 3,self.num_rotors))
+            D = torch.zeros(self.num_drones, 3, device=self.device)
+            H = torch.zeros((self.num_drones, 3, self.num_rotors), device=self.device)
+            M_flap = torch.zeros((self.num_drones, 3,self.num_rotors), device=self.device)
 
         # Compute the moments due to the rotor thrusts, rotor drag (if applicable), and rotor drag torques
         # install opt-einsum https://pytorch.org/docs/stable/generated/torch.einsum.html
         M_force = -torch.einsum('bijk, bik->bj', BatchedMultirotor.hat_map(self.rotor_geometry.squeeze()).unsqueeze(0).float(), T+H)
-        M_yaw = torch.zeros(self.num_drones, 3, 4)
+        M_yaw = torch.zeros(self.num_drones, 3, 4, device=self.device)
         M_yaw[...,-1,:] = self.rotor_dir * self.k_m * rotor_speeds**2
 
         if debug:
@@ -352,7 +361,7 @@ class BatchedMultirotor(object):
             # The controller directly controls motor speeds, so command that. 
             return control['cmd_motor_speeds']
         else:
-            raise ValueError("Invalid control abstraction selected. Options are: cmd_motor_speeds")
+            raise ValueError("Invalid control abstraction selected for BatchedMultirotor. Options are: cmd_motor_speeds")
 
 
     @classmethod
@@ -366,27 +375,39 @@ class BatchedMultirotor(object):
                          1-2*(q[0]**2  +q[1]**2)    ])
 
 
+    # TODO(hersh500): for torch.jit.trace, this needs to be implemented fully in torch.
+    # TODO(hersh500): this will be slow on gpu, due to numpy -> gpu data transfer.
     @classmethod
     def hat_map(cls, s):
         """
         Given vector s in R^3, return associate skew symmetric matrix S in R^3x3
         In the vectorized implementation, we assume that s is in the shape (N arrays, 3)
         """
+        device = s.device
         if len(s.shape) > 1:  # Vectorized implementation
             return torch.from_numpy(np.array([[ np.zeros(s.shape[0]), -s[:,2],  s[:,1]],
                              [ s[:,2],     np.zeros(s.shape[0]), -s[:,0]],
-                             [-s[:,1],  s[:,0],     np.zeros(s.shape[0])]]))
+                             [-s[:,1],  s[:,0],     np.zeros(s.shape[0])]])).to(s.device)
+            # This is extremely slow/incorrect???
+            # s = s.unsqueeze(-1)
+            # hat = torch.cat([torch.zeros(s.shape[0], 1, device=device), -s[:, 2], s[:,1],
+            #                  s[:,2], torch.zeros(s.shape[0], 1, device=device), -s[:,0],
+            #                  -s[:,1], s[:,0], torch.zeros(s.shape[0], 1, device=device)], dim=1).view(3, 3, s.shape[0]).float()
+            # return hat
         else:
-            return torch.from_numpy(np.array([[    0, -s[2],  s[1]],
-                             [ s[2],     0, -s[0]],
-                             [-s[1],  s[0],     0]]))
+            # return torch.from_numpy(np.array([[    0, -s[2],  s[1]],
+            #                  [ s[2],     0, -s[0]],
+            #                  [-s[1],  s[0],     0]]))
+            return torch.tensor([[0, -s[2], s[1]],
+                                [s[2], 0, -s[0]],
+                                 [-s[1], s[0], 0]], device=device)
 
     @classmethod
-    def _pack_state(cls, state, num_drones):
+    def _pack_state(cls, state, num_drones, device):
         """
         Convert a state dict to Quadrotor's private internal vector representation.
         """
-        s = torch.zeros(num_drones, 20)   # FIXME: this shouldn't be hardcoded. Should vary with the number of rotors.
+        s = torch.zeros(num_drones, 20, device=device)   # FIXME: this shouldn't be hardcoded. Should vary with the number of rotors.
         s[...,0:3]   = state['x']       # inertial position
         s[...,3:6]   = state['v']       # inertial velocity
         s[...,6:10]  = state['q']       # orientation
