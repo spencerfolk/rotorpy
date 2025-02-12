@@ -15,14 +15,14 @@ from rotorpy.world import World
 def main():
     device = torch.device("cpu")
     #### Initial Drone States ####
-    num_drones = 10
+    num_drones = 1000
     init_rotor_speed = 1788.53
-    x0 = {'x': torch.zeros(num_drones,3),
-          'v': torch.zeros(num_drones, 3),
-          'q': torch.tensor([0, 0, 0, 1]).repeat(num_drones, 1), # [i,j,k,w]
-          'w': torch.zeros(num_drones, 3),
-          'wind': torch.zeros(num_drones, 3),  # Since wind is handled elsewhere, this value is overwritten
-          'rotor_speeds': torch.tensor([init_rotor_speed, init_rotor_speed, init_rotor_speed, init_rotor_speed]).repeat(num_drones, 1)}
+    x0 = {'x': torch.zeros(num_drones,3, device=device),
+          'v': torch.zeros(num_drones, 3, device=device),
+          'q': torch.tensor([0, 0, 0, 1], device=device).repeat(num_drones, 1), # [i,j,k,w]
+          'w': torch.zeros(num_drones, 3, device=device),
+          'wind': torch.zeros(num_drones, 3, device=device),  # Since wind is handled elsewhere, this value is overwritten
+          'rotor_speeds': torch.tensor([init_rotor_speed, init_rotor_speed, init_rotor_speed, init_rotor_speed], device=device).repeat(num_drones, 1)}
 
     x0_single = {'x': np.array([0, 0, 0]),
      'v': np.zeros(3, ),
@@ -34,7 +34,7 @@ def main():
      #### Generate Trajectories ####
     world = World({"bounds": {"extents": [-10, 10, -10, 10, -10, 10]}, "blocks": []})
     num_waypoints = 3
-    v_avg_des = 3.0
+    v_avg_des = 2.0
     positions = x0['x']
     trajectories = []
     ref_traj_gen_start_time = time.time()
@@ -58,10 +58,6 @@ def main():
     controller_single = SE3Control(quad_params)
     vehicle_single = Multirotor(quad_params, initial_state=x0_single)
     vehicle_single.motor_noise = 0
-
-    s_test = torch.rand(3, 3)
-    print(vehicle_single.hat_map(s_test[0].numpy()))
-    print(vehicle.hat_map(s_test))
 
     t = 0
     dt = 0.01

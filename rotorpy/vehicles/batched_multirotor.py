@@ -86,7 +86,7 @@ class BatchedMultirotor(object):
         self.num_rotors      = quad_params['num_rotors']
         self.rotor_pos       = quad_params['rotor_pos']
 
-        self.rotor_dir       = torch.from_numpy(quad_params['rotor_directions']).to(device)
+        self.rotor_dir       = torch.from_numpy(quad_params['rotor_directions'])
 
         self.extract_geometry()
 
@@ -128,6 +128,7 @@ class BatchedMultirotor(object):
                                                    np.hstack([np.cross(self.rotor_pos[key],
                                                                        np.array([0,0,1])).reshape(-1,1)[0:2] for key in self.rotor_pos]),
                                                    (k * self.rotor_dir).reshape(1,-1)))).to(device)
+        self.rotor_dir = self.rotor_dir.to(device)
         self.TM_to_f = torch.linalg.inv(self.f_to_TM)
 
         # Set the initial state
@@ -322,7 +323,7 @@ class BatchedMultirotor(object):
             # Pitching flapping moment acting at each propeller hub.
             M_flap = BatchedMultirotor.hat_map(local_airspeeds.transpose(1, 2).reshape(self.num_drones*4, 3))
             M_flap = M_flap.permute(2, 0, 1).reshape(self.num_drones, 4, 3, 3).float()
-            M_flap = M_flap@torch.tensor([0,0,1.0])
+            M_flap = M_flap@torch.tensor([0,0,1.0], device=self.device)
             M_flap = -self.k_flap*rotor_speeds.unsqueeze(1)*M_flap.transpose(-1, -2)
         else:
             D = torch.zeros(self.num_drones, 3, device=self.device)
@@ -385,9 +386,10 @@ class BatchedMultirotor(object):
         """
         device = s.device
         if len(s.shape) > 1:  # Vectorized implementation
+            s = s.cpu()
             return torch.from_numpy(np.array([[ np.zeros(s.shape[0]), -s[:,2],  s[:,1]],
                              [ s[:,2],     np.zeros(s.shape[0]), -s[:,0]],
-                             [-s[:,1],  s[:,0],     np.zeros(s.shape[0])]])).to(s.device)
+                             [-s[:,1],  s[:,0],     np.zeros(s.shape[0])]])).to(device)
             # This is extremely slow/incorrect???
             # s = s.unsqueeze(-1)
             # hat = torch.cat([torch.zeros(s.shape[0], 1, device=device), -s[:, 2], s[:,1],
