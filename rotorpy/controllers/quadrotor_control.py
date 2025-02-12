@@ -1,4 +1,6 @@
 import numpy as np
+import torch
+import roma
 from scipy.spatial.transform import Rotation
 
 class SE3Control(object):
@@ -173,3 +175,100 @@ class SE3Control(object):
                          'cmd_acc': cmd_acc}
         
         return control_input
+
+
+class SE3ControlBatch(object):
+    # eventually, we could batch the quad params as well.
+    def __init__(self, quad_params, device):
+        self.device = device
+        # Quadrotor physical parameters
+        self.mass = quad_params['mass']
+        self.inertia = torch.tensor([[quad_params['Ixx'], quad_params['Ixy'], quad_params['Ixz']],
+                                     [quad_params['Ixy'], quad_params['Iyy'], quad_params['Iyz']],
+                                     [quad_params['Ixz'], quad_params['Iyz'], quad_params['Izz']]], device=self.device)
+        self.g = 9.81
+
+        # Gains
+        self.kp_pos = torch.tensor([6.5, 6.5, 15], device=self.device).unsqueeze(0)
+        self.kd_pos = torch.tensor([4.0, 4.0, 9], device=self.device).unsqueeze(0)
+        self.kp_att = 544
+        self.kd_att = 46.64
+        self.kp_vel = 0.1 * self.kp_pos
+
+        # Control allocation matrix
+        self.k_eta = quad_params['k_eta']
+        self.k_m = quad_params['k_m']
+        k = self.k_m / self.k_eta
+        self.num_rotors = quad_params['num_rotors']
+        # self.rotor_pos = torch.tensor(list(quad_params['rotor_pos'].values()))
+        # self.rotor_dir = torch.tensor(quad_params['rotor_directions'])
+
+        self.rotor_pos       = quad_params['rotor_pos']
+        self.rotor_dir       = quad_params['rotor_directions']
+
+
+        self.f_to_TM = torch.from_numpy(np.vstack((np.ones((1,self.num_rotors)),
+                                                   np.hstack([np.cross(self.rotor_pos[key],np.array([0,0,1])).reshape(-1,1)[0:2] for key in self.rotor_pos]),
+                                                   (k * self.rotor_dir).reshape(1,-1)))).float().to(self.device)
+        self.TM_to_f = torch.linalg.inv(self.f_to_TM)
+
+    def normalize(self, x):
+        return x / torch.norm(x, dim=-1, keepdim=True)
+
+    # TODO(hersh500): I suspect, due to uses of squeeze(), if batch_size==1 then there might be errors.
+    def update(self, states, flat_outputs):
+        '''
+        Computes a batch of control outputs
+        :param states: a dictionary of pytorch tensors containing the states of the quadrotors
+        :param flat_outputs: a dictionary of pytorch tensors containing the reference trajectories for each quad.
+        :return:
+        '''
+        pos_err = states['x'].float() - flat_outputs['x']
+        dpos_err = states['v'].float() - flat_outputs['x_dot']
+
+        F_des = self.mass * (-self.kp_pos * pos_err
+                             - self.kd_pos * dpos_err
+                             + flat_outputs['x_ddot']
+                             + torch.tensor([0, 0, self.g], device=self.device))
+
+
+        # R = torch.tensor(np.array([Rotation.from_quat(q).as_matrix() for q in states['q']])).float().to(self.device)
+        R = roma.unitquat_to_rotmat(states['q']).float()
+        b3 = R @ torch.tensor([0.0, 0.0, 1.0], device=self.device).float()
+        u1 = torch.sum(F_des * b3, dim=-1).float()
+
+        b3_des = self.normalize(F_des)
+        yaw_des = flat_outputs['yaw']
+        c1_des = torch.stack([torch.cos(yaw_des), torch.sin(yaw_des), torch.zeros_like(yaw_des)], dim=-1)
+        b2_des = self.normalize(torch.cross(b3_des, c1_des, dim=-1))
+        b1_des = torch.cross(b2_des, b3_des, dim=-1)
+        R_des = torch.stack([b1_des, b2_des, b3_des], dim=-1)
+
+        S_err = 0.5 * (R_des.transpose(-1, -2) @ R - R.transpose(-1, -2) @ R_des)
+        att_err = torch.stack([-S_err[:, 1, 2], S_err[:, 0, 2], -S_err[:, 0, 1]], dim=-1)
+
+        w_des = torch.stack([torch.zeros_like(yaw_des), torch.zeros_like(yaw_des), flat_outputs['yaw_dot']], dim=-1).to(self.device)
+        w_err = states['w'] - w_des
+
+        Iw = self.inertia.unsqueeze(0).float() @ states['w'].unsqueeze(-1)
+        x = -self.kp_att * att_err - self.kd_att * w_err
+        u2 = (self.inertia.unsqueeze(0).float() @ x.unsqueeze(-1)).squeeze() + torch.cross(states['w'], Iw.squeeze(), dim=-1)
+
+        TM = torch.cat([u1.unsqueeze(-1), u2], dim=-1)
+        cmd_rotor_thrusts = self.TM_to_f @ TM.T
+        cmd_motor_speeds = cmd_rotor_thrusts / self.k_eta
+        cmd_motor_speeds = torch.sign(cmd_motor_speeds) * torch.sqrt(torch.abs(cmd_motor_speeds))
+
+        # cmd_q = torch.tensor([Rotation.from_matrix(r.numpy()).as_quat() for r in R_des], device=self.device)
+        cmd_q = roma.rotmat_to_unitquat(R_des)
+        cmd_v = -self.kp_vel * pos_err + flat_outputs['x_dot']
+
+        # cmd_motor_speeds_rpm = rad_to_rpm(cmd_motor_speeds)
+        control_inputs = {'cmd_motor_speeds': cmd_motor_speeds.T,
+                          # 'cmd_motor_speeds_rpm': cmd_motor_speeds_rpm.T,
+                          'cmd_thrust': u1,
+                          'cmd_moment': u2,
+                          'cmd_q': cmd_q,
+                          'cmd_w': -self.kp_att * att_err - self.kd_att * w_err,
+                          'cmd_v': cmd_v}
+        return control_inputs

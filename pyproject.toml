@@ -28,6 +28,9 @@ dependencies = [
     'pandas',
     'tqdm',
     'gymnasium',
+    'roma',
+    'torch',
+    'torchdiffeq'
 ]
 
 [project.optional-dependencies]
