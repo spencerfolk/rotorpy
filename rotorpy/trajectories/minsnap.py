@@ -395,11 +395,11 @@ class BatchedMinSnap:
 
         ts_expd = torch.cat([(ts**i).unsqueeze(-1) for i in reversed(range(0, 8))], dim=-1).unsqueeze(1)
         batch_idxs = torch.arange(self.num_trajs, device=self.device)
-        x_out = self.batch_polyval(self.xs[batch_idxs,segment_idxs], ts_expd).float()
-        x_dot_out = self.batch_polyval(self.x_dots[batch_idxs,segment_idxs], ts_expd[...,1:]).float()
-        x_ddot_out = self.batch_polyval(self.x_ddots[batch_idxs,segment_idxs], ts_expd[...,2:]).float()
-        yaw_out = self.batch_polyval(self.yaws[batch_idxs,segment_idxs], ts_expd).squeeze().float()
-        yaw_dots_out = self.batch_polyval(self.yaw_dots[batch_idxs,segment_idxs], ts_expd[...,1:]).squeeze().float()
+        x_out = self.batch_polyval(self.xs[batch_idxs,segment_idxs], ts_expd).double()
+        x_dot_out = self.batch_polyval(self.x_dots[batch_idxs,segment_idxs], ts_expd[...,1:]).double()
+        x_ddot_out = self.batch_polyval(self.x_ddots[batch_idxs,segment_idxs], ts_expd[...,2:]).double()
+        yaw_out = self.batch_polyval(self.yaws[batch_idxs,segment_idxs], ts_expd).squeeze().double()
+        yaw_dots_out = self.batch_polyval(self.yaw_dots[batch_idxs,segment_idxs], ts_expd[...,1:]).squeeze().double()
 
         flat_output = {'x':x_out, 'x_dot':x_dot_out, 'x_ddot':x_ddot_out,
                        'yaw':yaw_out, 'yaw_dot':yaw_dots_out}

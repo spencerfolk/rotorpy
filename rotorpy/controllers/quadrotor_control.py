@@ -209,7 +209,7 @@ class SE3ControlBatch(object):
 
         self.f_to_TM = torch.from_numpy(np.vstack((np.ones((1,self.num_rotors)),
                                                    np.hstack([np.cross(self.rotor_pos[key],np.array([0,0,1])).reshape(-1,1)[0:2] for key in self.rotor_pos]),
-                                                   (k * self.rotor_dir).reshape(1,-1)))).float().to(self.device)
+                                                   (k * self.rotor_dir).reshape(1,-1)))).double().to(self.device)
         self.TM_to_f = torch.linalg.inv(self.f_to_TM)
 
     def normalize(self, x):
@@ -223,8 +223,8 @@ class SE3ControlBatch(object):
         :param flat_outputs: a dictionary of pytorch tensors containing the reference trajectories for each quad.
         :return:
         '''
-        pos_err = states['x'].float() - flat_outputs['x']
-        dpos_err = states['v'].float() - flat_outputs['x_dot']
+        pos_err = states['x'].double() - flat_outputs['x']
+        dpos_err = states['v'].double() - flat_outputs['x_dot']
 
         F_des = self.mass * (-self.kp_pos * pos_err
                              - self.kd_pos * dpos_err
@@ -233,9 +233,9 @@ class SE3ControlBatch(object):
 
 
         # R = torch.tensor(np.array([Rotation.from_quat(q).as_matrix() for q in states['q']])).float().to(self.device)
-        R = roma.unitquat_to_rotmat(states['q']).float()
-        b3 = R @ torch.tensor([0.0, 0.0, 1.0], device=self.device).float()
-        u1 = torch.sum(F_des * b3, dim=-1).float()
+        R = roma.unitquat_to_rotmat(states['q']).double()
+        b3 = R @ torch.tensor([0.0, 0.0, 1.0], device=self.device).double()
+        u1 = torch.sum(F_des * b3, dim=-1).double()
 
         b3_des = self.normalize(F_des)
         yaw_des = flat_outputs['yaw']
@@ -250,9 +250,9 @@ class SE3ControlBatch(object):
         w_des = torch.stack([torch.zeros_like(yaw_des), torch.zeros_like(yaw_des), flat_outputs['yaw_dot']], dim=-1).to(self.device)
         w_err = states['w'] - w_des
 
-        Iw = self.inertia.unsqueeze(0).float() @ states['w'].unsqueeze(-1).float()
+        Iw = self.inertia.unsqueeze(0).double() @ states['w'].unsqueeze(-1).double()
         x = -self.kp_att * att_err - self.kd_att * w_err
-        u2 = (self.inertia.unsqueeze(0).float() @ x.unsqueeze(-1)).squeeze() + torch.cross(states['w'], Iw.squeeze(), dim=-1)
+        u2 = (self.inertia.unsqueeze(0).double() @ x.unsqueeze(-1)).squeeze() + torch.cross(states['w'], Iw.squeeze(), dim=-1)
 
         TM = torch.cat([u1.unsqueeze(-1), u2], dim=-1)
         cmd_rotor_thrusts = self.TM_to_f @ TM.T

@@ -107,16 +107,16 @@ class BatchedMultirotor(object):
         # Additional constants.
         self.inertia = torch.tensor([[self.Ixx, self.Ixy, self.Ixz],
                                  [self.Ixy, self.Iyy, self.Iyz],
-                                 [self.Ixz, self.Iyz, self.Izz]], device=device).unsqueeze(0)  # will be useful to add a batch dim
+                                 [self.Ixz, self.Iyz, self.Izz]], device=device).unsqueeze(0).double()  # will be useful to add a batch dim
         self.rotor_drag_matrix = torch.tensor([[self.k_d,   0,                 0],
                                            [0,          self.k_d,          0],
-                                           [0,          0,          self.k_z]], device=device).float()
+                                           [0,          0,          self.k_z]], device=device).double()
         self.drag_matrix = torch.tensor([[self.c_Dx,    0,          0],
                                      [0,            self.c_Dy,  0],
-                                     [0,            0,          self.c_Dz]], device=device).float()
+                                     [0,            0,          self.c_Dz]], device=device).double()
         self.g = 9.81 # m/s^2
 
-        self.inv_inertia = torch.linalg.inv(self.inertia)
+        self.inv_inertia = torch.linalg.inv(self.inertia).double()
         self.weight = torch.tensor([0, 0, -self.mass*self.g], device=device)
 
         # Control allocation
@@ -191,11 +191,12 @@ class BatchedMultirotor(object):
 
     # TODO(hersh500): add the ability to selectively step certain drones. This will be useful if some drones
     # crash or finish their trajectories earlier than others.
-    def step(self, state, control, t_step, debug=False):
+    def step(self, state, control, t_step, idxs=None, debug=False):
         """
         Integrate dynamics forward from state given constant control for time t_step.
         """
-
+        if idxs is None:
+            idxs = [i for i in range(self.num_drones)]
         cmd_rotor_speeds = self.get_cmd_motor_speeds(state, control)
 
         # The true motor speeds can not fall below min and max speeds.
@@ -208,7 +209,7 @@ class BatchedMultirotor(object):
 
         # Option 1 - RK45 integration
         # sol = scipy.integrate.solve_ivp(s_dot_fn, (0, t_step), s, first_step=t_step)
-        sol = odeint(s_dot_fn, s, t=torch.tensor([0.0, t_step], device=self.device))
+        sol = odeint(s_dot_fn, s, t=torch.tensor([0.0, t_step], device=self.device), method='dopri5')
         # s = sol['y'][:,-1]
         s = sol[-1,:]
         # Option 2 - Euler integration
@@ -241,7 +242,7 @@ class BatchedMultirotor(object):
         wind_velocity = state['wind']
 
         # R = Rotation.from_quat(state['q']).as_matrix()
-        R = roma.unitquat_to_rotmat(state['q'])
+        R = roma.unitquat_to_rotmat(state['q']).double()
 
         # Rotor speed derivative
         rotor_accel = (1/self.tau_m)*(cmd_rotor_speeds - rotor_speeds)
@@ -255,7 +256,7 @@ class BatchedMultirotor(object):
         q_dot = quat_dot(state['q'], state['w'])
 
         # Compute airspeed vector in the body frame
-        body_airspeed_vector = R.transpose(1, 2)@(inertial_velocity - wind_velocity).unsqueeze(-1)
+        body_airspeed_vector = R.transpose(1, 2)@(inertial_velocity - wind_velocity).unsqueeze(-1).double()
 
         body_airspeed_vector = body_airspeed_vector.squeeze(-1)
         if debug:
@@ -272,9 +273,9 @@ class BatchedMultirotor(object):
         v_dot = (self.weight + Ftot.squeeze(-1)) / self.mass
 
         # Angular velocity derivative.
-        w = state['w']
+        w = state['w'].double()
         w_hat = BatchedMultirotor.hat_map(w).permute(2, 0, 1)
-        w_dot = self.inv_inertia @ (MtotB - (w_hat.float() @ (self.inertia @ w.unsqueeze(-1))).squeeze(-1)).unsqueeze(-1)
+        w_dot = self.inv_inertia @ (MtotB - (w_hat.double() @ (self.inertia @ w.unsqueeze(-1))).squeeze(-1)).unsqueeze(-1)
         if debug:
             print(f"batched multirotor FtotB: {FtotB}") # CORRECT
             print(f"batched multirotor w_dot: {w_dot}") # CORRECT
@@ -317,12 +318,12 @@ class BatchedMultirotor(object):
             tmp = self.drag_matrix.unsqueeze(0)@(body_airspeed_vector).unsqueeze(-1)
             D = -BatchedMultirotor._norm(body_airspeed_vector).unsqueeze(-1)*tmp.squeeze()
             # Rotor drag (aka H force) acting at each propeller hub.
-            tmp = self.rotor_drag_matrix.unsqueeze(0)@local_airspeeds.float()
+            tmp = self.rotor_drag_matrix.unsqueeze(0)@local_airspeeds.double()
             H = -rotor_speeds.unsqueeze(1)*tmp
             # Pitching flapping moment acting at each propeller hub.
             M_flap = BatchedMultirotor.hat_map(local_airspeeds.transpose(1, 2).reshape(self.num_drones*4, 3))
-            M_flap = M_flap.permute(2, 0, 1).reshape(self.num_drones, 4, 3, 3).float()
-            M_flap = M_flap@torch.tensor([0,0,1.0])
+            M_flap = M_flap.permute(2, 0, 1).reshape(self.num_drones, 4, 3, 3).double()
+            M_flap = M_flap@torch.tensor([0,0,1.0]).double()
             M_flap = -self.k_flap*rotor_speeds.unsqueeze(1)*M_flap.transpose(-1, -2)
         else:
             D = torch.zeros(self.num_drones, 3, device=self.device)
@@ -331,7 +332,7 @@ class BatchedMultirotor(object):
 
         # Compute the moments due to the rotor thrusts, rotor drag (if applicable), and rotor drag torques
         # install opt-einsum https://pytorch.org/docs/stable/generated/torch.einsum.html
-        M_force = -torch.einsum('bijk, bik->bj', BatchedMultirotor.hat_map(self.rotor_geometry.squeeze()).unsqueeze(0).float(), T+H)
+        M_force = -torch.einsum('bijk, bik->bj', BatchedMultirotor.hat_map(self.rotor_geometry.squeeze()).unsqueeze(0).double(), T+H)
         M_yaw = torch.zeros(self.num_drones, 3, 4, device=self.device)
         M_yaw[...,-1,:] = self.rotor_dir * self.k_m * rotor_speeds**2
 
@@ -407,7 +408,7 @@ class BatchedMultirotor(object):
         """
         Convert a state dict to Quadrotor's private internal vector representation.
         """
-        s = torch.zeros(num_drones, 20, device=device)   # FIXME: this shouldn't be hardcoded. Should vary with the number of rotors.
+        s = torch.zeros(num_drones, 20, device=device).double()   # FIXME: this shouldn't be hardcoded. Should vary with the number of rotors.
         s[...,0:3]   = state['x']       # inertial position
         s[...,3:6]   = state['v']       # inertial velocity
         s[...,6:10]  = state['q']       # orientation
@@ -426,6 +427,7 @@ class BatchedMultirotor(object):
         norm = torch.linalg.norm(v, dim=-1)
         return norm
 
+    # TODO(hersh500): make this work with selected indexes.
     @classmethod
     def _unpack_state(cls, s):
         """
@@ -437,6 +439,7 @@ class BatchedMultirotor(object):
         wind = wind vector
         rotor_speeds = rotor speeds
         """
+        # fill state with zeros, then replace with appropriate indexes.
         state = {'x':s[...,0:3], 'v':s[...,3:6], 'q':s[...,6:10], 'w':s[...,10:13], 'wind':s[...,13:16], 'rotor_speeds':s[...,16:]}
         return state
 
@@ -445,7 +448,7 @@ def merge_rotorpy_states(states):
     array_keys = ["x", "v", "q", "w", "wind", "rotor_speeds"]
     merged_states = {}
     for key in array_keys:
-        merged_states[key] = torch.cat([torch.from_numpy(f[key]).unsqueeze(0).float() for f in states], dim=0)
+        merged_states[key] = torch.cat([torch.from_numpy(f[key]).unsqueeze(0).double() for f in states], dim=0)
     return merged_states
 
 
@@ -455,7 +458,7 @@ def merge_flat_outputs(flat_outputs, device):
     scalar_keys = ["yaw", "yaw_dot"]
     merged_flat_outputs = {}
     for key in array_keys:
-        merged_flat_outputs[key] = torch.cat([torch.from_numpy(f[key]).unsqueeze(0).float() for f in flat_outputs], dim=0).float().to(device)
+        merged_flat_outputs[key] = torch.cat([torch.from_numpy(f[key]).unsqueeze(0).double() for f in flat_outputs], dim=0).double().to(device)
     for key in scalar_keys:
-        merged_flat_outputs[key] = torch.from_numpy(np.array([f[key] for f in flat_outputs])).float().to(device)
+        merged_flat_outputs[key] = torch.from_numpy(np.array([f[key] for f in flat_outputs])).double().to(device)
     return merged_flat_outputs

@@ -14,12 +14,15 @@ def simulate_batch(world,
                    vehicles,
                    controller,
                    trajectories,
+                   wind_profile,
                    t_final,
                    t_step,
                    safety_margin,
                    terminate=None):
     """
     Perform a vehicle simulation and return the numerical results.
+    Note that, currently, compared to the normal simulate() function, simulate_batch() does not support
+    IMU measurements, mocap, or the state estimator.
 
     Inputs:
         world, a class representing the world it is flying in, including objects and world bounds. 
@@ -37,23 +40,20 @@ def simulate_batch(world,
             the location of trajectory with t=inf. If False, never terminate
             before timeout or error. If a function, terminate when returns not
             None.
-        mocap, a MotionCapture object that provides noisy measurements of pose and twist with artifacts. 
-        use_mocap, a boolean to determine in noisy measurements from mocap should be used for quadrotor control
-        estimator, an estimator object that provides estimates of a portion or all of the vehicle state.
 
     Outputs:
         time, seconds, shape=(N,)
         state, a dict describing the state history with keys
-            x, position, m, shape=(N,3)
-            v, linear velocity, m/s, shape=(N,3)
-            q, quaternion [i,j,k,w], shape=(N,4)
-            w, angular velocity, rad/s, shape=(N,3)
-            rotor_speeds, motor speeds, rad/s, shape=(N,n) where n is the number of rotors
-            wind, wind velocity, m/s, shape=(N,3)
+            x, position, m, shape=(N,B,3)
+            v, linear velocity, m/s, shape=(N,B,3)
+            q, quaternion [i,j,k,w], shape=(N,B,4)
+            w, angular velocity, rad/s, shape=(N,B,3)
+            rotor_speeds, motor speeds, rad/s, shape=(N,B,n) where n is the number of rotors
+            wind, wind velocity, m/s, shape=(N,B,3)
         control, a dict describing the command input history with keys
-            cmd_motor_speeds, motor speeds, rad/s, shape=(N,4)
-            cmd_q, commanded orientation (not used by simulator), quaternion [i,j,k,w], shape=(N,4)
-            cmd_w, commanded angular velocity (not used by simulator), rad/s, shape=(N,3)
+            cmd_motor_speeds, motor speeds, rad/s, shape=(N,B,4)
+            cmd_q, commanded orientation (not used by simulator), quaternion [i,j,k,w], shape=(N,B,4)
+            cmd_w, commanded angular velocity (not used by simulator), rad/s, shape=(N,B,3)
         flat, a dict describing the desired flat outputs from the trajectory with keys
             x,        position, m
             x_dot,    velocity, m/s
@@ -62,17 +62,7 @@ def simulate_batch(world,
             x_ddddot, snap, m/s**4
             yaw,      yaw angle, rad
             yaw_dot,  yaw rate, rad/s
-        imu_measurements, a dict containing the biased and noisy measurements from an accelerometer and gyroscope
-            accel,  accelerometer, m/s**2
-            gyro,   gyroscope, rad/s
-        imu_gt, a dict containing the ground truth (no noise, no bias) measurements from an accelerometer and gyroscope
-            accel,  accelerometer, m/s**2
-            gyro,   gyroscope, rad/s
-        mocap_measurements, a dict containing noisy measurements of pose and twist for the vehicle. 
-            x, position (inertial)
-            v, velocity (inertial)
-            q, orientation of body w.r.t. inertial frame.
-            w, body rates in the body frame. 
+        exit_times, an array indicating at which timestep (not time!) each vehicle in the batch completed its sim, shape = (B)
         exit_status, an ExitStatus enum indicating the reason for termination.
     """
 
@@ -94,20 +84,13 @@ def simulate_batch(world,
     imu_gt = []
     state_estimate = []
     flat    = [trajectories.update(time[-1])]
-    mocap_measurements.append(mocap.measurement(state[-1], with_noise=True, with_artifacts=False))
-    if use_mocap:
-        # In this case the controller will use the motion capture estimate of the pose and twist for control. 
-        control = [controller.update(time[-1], mocap_measurements[-1], flat[-1])]
-    else:
-        control = [controller.update(time[-1], state[-1], flat[-1])]
+    control = [controller.update(time[-1], state[-1], flat[-1])]
     state_dot =  vehicles.statedot(state[0], control[0], t_step)
-    imu_measurements.append(imu.measurement(state[-1], state_dot, with_noise=True))
-    imu_gt.append(imu.measurement(state[-1], state_dot, with_noise=False))
-    state_estimate.append(estimator.step(state[0], control[0], imu_measurements[0], mocap_measurements[0]))
 
     exit_status = None
 
     while True:
+        # how slow is this?
         exit_status = exit_status or safety_exit(world, safety_margin, state[-1], flat[-1], control[-1])
         exit_status = exit_status or normal_exit(time[-1], state[-1])
         exit_status = exit_status or time_exit(time[-1], t_final)
@@ -117,20 +100,11 @@ def simulate_batch(world,
         state[-1]['wind'] = wind_profile.update(time[-1], state[-1]['x'])
         state.append(vehicles.step(state[-1], control[-1], t_step))
         flat.append(trajectories.update(time[-1]))
-        mocap_measurements.append(mocap.measurement(state[-1], with_noise=True, with_artifacts=mocap.with_artifacts))
-        state_estimate.append(estimator.step(state[-1], control[-1], imu_measurements[-1], mocap_measurements[-1]))
-        if use_mocap:
-            control.append(controller.update(time[-1], mocap_measurements[-1], flat[-1]))
-        else:
-            control.append(controller.update(time[-1], state[-1], flat[-1]))
+        control.append(controller.update(time[-1], state[-1], flat[-1]))
         state_dot = vehicles.statedot(state[-1], control[-1], t_step)
-        imu_measurements.append(imu.measurement(state[-1], state_dot, with_noise=True))
-        imu_gt.append(imu.measurement(state[-1], state_dot, with_noise=False))
 
     time    = np.array(time, dtype=float)    
     state   = merge_dicts(state)
-    imu_measurements = merge_dicts(imu_measurements)
-    imu_gt = merge_dicts(imu_gt)
     mocap_measurements = merge_dicts(mocap_measurements)
     control         = merge_dicts(control)
     flat            = merge_dicts(flat)
@@ -164,9 +138,10 @@ def traj_end_exit(initial_state, trajectory, using_vio = False):
     """
 
     xf = trajectory.update(np.inf)['x']
-    yawf = trajectory.update(np.inf)['yaw']
+    yawf = trajectory.update(np.inf)['yaw']  # (num_drones, 1)
     # rotf = Rotation.from_rotvec(yawf * np.array([0, 0, 1])) # create rotation object that describes yaw
-    rotf = roma.rotvec_to_rotmat(yawf*torch.tensor([0,0,1]))
+    # I suspect there will be some broadcasting issues here.
+    rotf = roma.rotvec_to_rotmat(yawf*torch.tensor([0,0,1]).unsqueeze(0))
     if np.array_equal(initial_state['x'], xf):
         min_time = 1.0
     else:
