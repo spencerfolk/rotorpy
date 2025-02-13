@@ -86,7 +86,7 @@ class BatchedMultirotor(object):
         self.num_rotors      = quad_params['num_rotors']
         self.rotor_pos       = quad_params['rotor_pos']
 
-        self.rotor_dir       = torch.from_numpy(quad_params['rotor_directions']).to(device)
+        self.rotor_dir       = torch.from_numpy(quad_params['rotor_directions'])
 
         self.extract_geometry()
 
@@ -128,6 +128,7 @@ class BatchedMultirotor(object):
                                                    np.hstack([np.cross(self.rotor_pos[key],
                                                                        np.array([0,0,1])).reshape(-1,1)[0:2] for key in self.rotor_pos]),
                                                    (k * self.rotor_dir).reshape(1,-1)))).to(device)
+        self.rotor_dir = self.rotor_dir.to(device)
         self.TM_to_f = torch.linalg.inv(self.f_to_TM)
 
         # Set the initial state
@@ -386,9 +387,10 @@ class BatchedMultirotor(object):
         """
         device = s.device
         if len(s.shape) > 1:  # Vectorized implementation
+            s = s.cpu()
             return torch.from_numpy(np.array([[ np.zeros(s.shape[0]), -s[:,2],  s[:,1]],
                              [ s[:,2],     np.zeros(s.shape[0]), -s[:,0]],
-                             [-s[:,1],  s[:,0],     np.zeros(s.shape[0])]])).to(s.device)
+                             [-s[:,1],  s[:,0],     np.zeros(s.shape[0])]])).to(device)
             # This is extremely slow/incorrect???
             # s = s.unsqueeze(-1)
             # hat = torch.cat([torch.zeros(s.shape[0], 1, device=device), -s[:, 2], s[:,1],
