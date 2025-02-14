@@ -11,7 +11,6 @@ import roma
 """
 Multirotor models, batched using PyTorch
 """
-@torch.jit.script
 def quat_dot(quat, omega):
     """
     Parameters:

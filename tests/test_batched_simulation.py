@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import time
 import matplotlib.pyplot as plt
+import torch.multiprocessing as mp
 
 from rotorpy.trajectories.minsnap import MinSnap, BatchedMinSnap
 from rotorpy.vehicles.batched_multirotor import BatchedMultirotor, merge_rotorpy_states, merge_flat_outputs
@@ -12,10 +13,31 @@ from rotorpy.utils.trajgen_utils import sample_waypoints
 from rotorpy.world import World
 
 
+def batched_worker(trajectory, vehicle, controller, x0):
+    torch.set_num_threads(1)
+    torch.multiprocessing.set_sharing_strategy('file_system')
+    t = 0
+    dt = 0.01
+    t_f = 3
+    try:
+        flats = [trajectory.update(t)]
+        states = [x0]
+        controls = [controller.update(states[-1], flats[-1])]
+    except Exception as e:
+        raise e
+
+    while t < t_f:
+        t += dt
+        states.append(vehicle.step(states[-1], controls[-1], dt))
+        flats.append(trajectory.update(t))
+        controls.append(controller.update(states[-1], flats[-1]))
+    return states, flats, controls
+    
 def main():
+    torch.multiprocessing.set_sharing_strategy('file_system')
     device = torch.device("cpu")
     #### Initial Drone States ####
-    num_drones = 100
+    num_drones = 1000
     init_rotor_speed = 1788.53
     x0 = {'x': torch.zeros(num_drones,3).double(),
           'v': torch.zeros(num_drones, 3).double(),
@@ -73,6 +95,14 @@ def main():
         flats.append(batched_trajs.update(t))
         controls.append(controller.update(states[-1], flats[-1]))
     print(f"time to simulate {num_drones} batched: {time.time() - batch_start_time}")
+
+    mp_batched_start_time = time.time()
+    num_mp_sims = 10
+    args = [(BatchedMinSnap(trajectories, device=device), BatchedMultirotor(quad_params, num_drones, dict(x0), device=device), SE3ControlBatch(quad_params, device=device), dict(x0)) for _ in range(num_mp_sims)]
+    pool = mp.Pool(processes=num_mp_sims)
+    results = pool.starmap(batched_worker, args)
+    print(f"time to simulate {num_drones * num_mp_sims} using mp and batching: {time.time() - mp_batched_start_time}")
+    
 
 
     series_start_time = time.time()
