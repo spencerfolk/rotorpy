@@ -430,7 +430,7 @@ class BatchedMultirotor(object):
 
     # TODO(hersh500): make this work with selected indexes.
     @classmethod
-    def _unpack_state(cls, s):
+    def _unpack_state(cls, s, idxs, num_drones):
         """
         Convert Quadrotor's private internal vector representation to a state dict.
         x = inertial position
@@ -441,7 +441,18 @@ class BatchedMultirotor(object):
         rotor_speeds = rotor speeds
         """
         # fill state with zeros, then replace with appropriate indexes.
-        state = {'x':s[...,0:3], 'v':s[...,3:6], 'q':s[...,6:10], 'w':s[...,10:13], 'wind':s[...,13:16], 'rotor_speeds':s[...,16:]}
+        state = {'x': torch.zeros(num_drones, 3),
+                 'v': torch.zeros(num_drones, 3),
+                 'q': torch.zeros(num_drones, 3),
+                 'w': torch.zeros(num_drones, 3),
+                 'wind': torch.zeros(num_drones, 3),
+                 'rotor_speeds': torch.zeros(num_drones, 3)}
+        state['x'][idxs] = s[idxs,0:3]
+        state['v'][idxs] = s[idxs,3:6]
+        state['q'][idxs] = s[idxs,6:10]
+        state['w'][idxs] = s[idxs,10:13]
+        state['wind'][idxs] = s[idxs,13:16]
+        state['rotor_speeds'][idxs] = s[idxs,16:]
         return state
 
 
