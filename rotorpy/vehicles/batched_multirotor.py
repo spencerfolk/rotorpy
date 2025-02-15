@@ -305,11 +305,12 @@ class BatchedMultirotor(object):
         The net moment Mtot is represented in the body frame. 
         """
 
+        num_drones = body_rates.shape[0]
         # Get the local airspeeds for each rotor
         local_airspeeds = body_airspeed_vector.unsqueeze(-1) + (BatchedMultirotor.hat_map(body_rates).permute(2, 0, 1))@(self.rotor_geometry.transpose(1,2))
 
         # Compute the thrust of each rotor, assuming that the rotors all point in the body z direction!
-        T = torch.zeros(self.num_drones, 3, 4, device=self.device)
+        T = torch.zeros(num_drones, 3, 4, device=self.device)
         T[...,-1,:] = self.k_eta * rotor_speeds**2
 
         # Add in aero wrenches (if applicable)
@@ -321,19 +322,19 @@ class BatchedMultirotor(object):
             tmp = self.rotor_drag_matrix.unsqueeze(0)@local_airspeeds.double()
             H = -rotor_speeds.unsqueeze(1)*tmp
             # Pitching flapping moment acting at each propeller hub.
-            M_flap = BatchedMultirotor.hat_map(local_airspeeds.transpose(1, 2).reshape(self.num_drones*4, 3))
-            M_flap = M_flap.permute(2, 0, 1).reshape(self.num_drones, 4, 3, 3).double()
+            M_flap = BatchedMultirotor.hat_map(local_airspeeds.transpose(1, 2).reshape(num_drones*4, 3))
+            M_flap = M_flap.permute(2, 0, 1).reshape(num_drones, 4, 3, 3).double()
             M_flap = M_flap@torch.tensor([0,0,1.0]).double()
             M_flap = -self.k_flap*rotor_speeds.unsqueeze(1)*M_flap.transpose(-1, -2)
         else:
-            D = torch.zeros(self.num_drones, 3, device=self.device)
-            H = torch.zeros((self.num_drones, 3, self.num_rotors), device=self.device)
-            M_flap = torch.zeros((self.num_drones, 3,self.num_rotors), device=self.device)
+            D = torch.zeros(num_drones, 3, device=self.device)
+            H = torch.zeros((num_drones, 3, self.num_rotors), device=self.device)
+            M_flap = torch.zeros((num_drones, 3,self.num_rotors), device=self.device)
 
         # Compute the moments due to the rotor thrusts, rotor drag (if applicable), and rotor drag torques
         # install opt-einsum https://pytorch.org/docs/stable/generated/torch.einsum.html
         M_force = -torch.einsum('bijk, bik->bj', BatchedMultirotor.hat_map(self.rotor_geometry.squeeze()).unsqueeze(0).double(), T+H)
-        M_yaw = torch.zeros(self.num_drones, 3, 4, device=self.device)
+        M_yaw = torch.zeros(num_drones, 3, 4, device=self.device)
         M_yaw[...,-1,:] = self.rotor_dir * self.k_m * rotor_speeds**2
 
         if debug:
