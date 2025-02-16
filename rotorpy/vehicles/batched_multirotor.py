@@ -132,7 +132,7 @@ class BatchedMultirotor(object):
 
         # Set the initial state
         self.initial_states = initial_states
-        assert(initial_states['x'].device == device, "Initial states must already be on the specified device.")
+        assert initial_states['x'].device == device, "Initial states must already be on the specified device."
         assert self.initial_states['x'].shape[0] == num_drones
 
         self.control_abstraction = control_abstraction

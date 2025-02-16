@@ -86,7 +86,7 @@ def main():
     torch.multiprocessing.set_sharing_strategy('file_system')
     device = torch.device("cpu")
     #### Initial Drone States ####
-    num_drones = 1000
+    num_drones = 100
     init_rotor_speed = 1788.53
     x0 = {'x': torch.zeros(num_drones,3).double(),
           'v': torch.zeros(num_drones, 3).double(),
@@ -121,8 +121,17 @@ def main():
         except TypeError:
             continue
 
+    kp_pos = torch.tensor([6.5, 6.5, 15]).repeat(num_drones, 1).double()
+    kd_pos = torch.tensor([4.0, 4.0, 9]).repeat(num_drones, 1).double()
+    kp_att = torch.tensor([544]).repeat(num_drones, 1).double()
+    kd_att = torch.tensor([46.64]).repeat(num_drones, 1).double()
+
     batched_trajs = BatchedMinSnap(trajectories, device=device)
-    controller = SE3ControlBatch(quad_params, device=device)
+    controller = SE3ControlBatch(quad_params, device=device,
+                                 kp_pos=kp_pos,
+                                 kd_pos=kd_pos,
+                                 kp_att=kp_att,
+                                 kd_att=kd_att)
     vehicle = BatchedMultirotor(quad_params, num_drones, x0, device=device)
     print(f"Time to Generate reference trajectories: {time.time() - ref_traj_gen_start_time}")
 

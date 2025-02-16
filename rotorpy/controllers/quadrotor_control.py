@@ -179,7 +179,13 @@ class SE3Control(object):
 
 class SE3ControlBatch(object):
     # eventually, we could batch the quad params as well.
-    def __init__(self, quad_params, device):
+    def __init__(self, quad_params, device, kp_pos=None, kd_pos=None, kp_att=None, kd_att=None):
+        '''
+        kp_pos: torch.Tensor of shape (num_drones, 3) or (1, 3)
+        kd_pos: torch.Tensor of shape (num_drones, 3) or (1, 3)
+        kp_att: torch.Tensor of shape (num_drones,) or scalar
+        kd_att: torch.Tensor of shape (num_drones,) or scalar
+        '''
         self.device = device
         # Quadrotor physical parameters
         self.mass = quad_params['mass']
@@ -189,10 +195,23 @@ class SE3ControlBatch(object):
         self.g = 9.81
 
         # Gains
-        self.kp_pos = torch.tensor([6.5, 6.5, 15], device=self.device).unsqueeze(0)
-        self.kd_pos = torch.tensor([4.0, 4.0, 9], device=self.device).unsqueeze(0)
-        self.kp_att = 544
-        self.kd_att = 46.64
+        if kp_pos is None:
+            self.kp_pos = torch.tensor([6.5, 6.5, 15], device=self.device).unsqueeze(0)
+        else:
+            self.kp_pos = kp_pos.to(self.device).double()
+        if kd_pos is None:
+            self.kd_pos = torch.tensor([4.0, 4.0, 9], device=self.device).unsqueeze(0)
+        else:
+            self.kd_pos = kd_pos.to(self.device).double()
+        if kp_att is None:
+            self.kp_att = 544
+        else:
+            self.kp_att = kp_att.to(self.device).double()
+        if kd_att is None:
+            self.kd_att = 46.64
+        else:
+            self.kd_att = kd_att.to(self.device).double()
+
         self.kp_vel = 0.1 * self.kp_pos
 
         # Control allocation matrix
@@ -227,8 +246,8 @@ class SE3ControlBatch(object):
         pos_err = states['x'][idxs].double() - flat_outputs['x'][idxs]
         dpos_err = states['v'][idxs].double() - flat_outputs['x_dot'][idxs]
 
-        F_des = self.mass * (-self.kp_pos * pos_err
-                             - self.kd_pos * dpos_err
+        F_des = self.mass * (-self.kp_pos[idxs] * pos_err
+                             - self.kd_pos[idxs] * dpos_err
                              + flat_outputs['x_ddot'][idxs]
                              + torch.tensor([0, 0, self.g], device=self.device))
 
@@ -252,7 +271,7 @@ class SE3ControlBatch(object):
         w_err = states['w'][idxs] - w_des
 
         Iw = self.inertia.unsqueeze(0).double() @ states['w'][idxs].unsqueeze(-1).double()
-        tmp = -self.kp_att * att_err - self.kd_att * w_err
+        tmp = -self.kp_att[idxs] * att_err - self.kd_att[idxs] * w_err
         u2 = (self.inertia.unsqueeze(0).double() @ tmp.unsqueeze(-1)).squeeze(-1) + torch.cross(states['w'][idxs], Iw.squeeze(-1), dim=-1)
 
         TM = torch.cat([u1.unsqueeze(-1), u2], dim=-1)
@@ -262,13 +281,13 @@ class SE3ControlBatch(object):
 
         # cmd_q = torch.tensor([Rotation.from_matrix(r.numpy()).as_quat() for r in R_des], device=self.device)
         cmd_q = roma.rotmat_to_unitquat(R_des)
-        cmd_v = -self.kp_vel * pos_err + flat_outputs['x_dot'][idxs]
+        cmd_v = -self.kp_vel[idxs] * pos_err + flat_outputs['x_dot'][idxs]
 
         control_inputs = SE3ControlBatch._unpack_control(cmd_motor_speeds.T,
                                                          u1.unsqueeze(-1),
                                                          u2,
                                                          cmd_q,
-                                                         -self.kp_att*att_err - self.kd_att*w_err,
+                                                         -self.kp_att[idxs]*att_err - self.kd_att[idxs]*w_err,
                                                          cmd_v,
                                                          idxs,
                                                          states['x'].shape[0])
