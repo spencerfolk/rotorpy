@@ -194,6 +194,7 @@ class BatchedMultirotor(object):
     def step(self, state, control, t_step, idxs=None, debug=False):
         """
         Integrate dynamics forward from state given constant control for time t_step.
+        idxs: integer array of shape (num_running_drones, )
         """
         if idxs is None:
             idxs = [i for i in range(self.num_drones)]
@@ -204,21 +205,21 @@ class BatchedMultirotor(object):
 
         # Form autonomous ODE for constant inputs and integrate one time step.
         def s_dot_fn(t, s):
-            return self._s_dot_fn(t, s, cmd_rotor_speeds, debug)
+            return self._s_dot_fn(t, s, cmd_rotor_speeds, idxs, debug)
         s = BatchedMultirotor._pack_state(state, self.num_drones, self.device)
 
         # Option 1 - RK45 integration
         # sol = scipy.integrate.solve_ivp(s_dot_fn, (0, t_step), s, first_step=t_step)
-        sol = odeint(s_dot_fn, s, t=torch.tensor([0.0, t_step], device=self.device), method='dopri5')
+        sol = odeint(s_dot_fn, s[idxs], t=torch.tensor([0.0, t_step], device=self.device), method='dopri5')
         # s = sol['y'][:,-1]
         s = sol[-1,:]
         # Option 2 - Euler integration
         # s = s + s_dot_fn(0, s) * t_step  # first argument doesn't matter. It's time invariant model
 
-        state = BatchedMultirotor._unpack_state(s)
+        state = BatchedMultirotor._unpack_state(s, idxs, self.num_drones)
 
         # Re-normalize unit quaternion.
-        state['q'] = state['q'] / torch.norm(state['q'], dim=-1).unsqueeze(-1)
+        state['q'][idxs] = state['q'][idxs] / torch.norm(state['q'][idxs], dim=-1).unsqueeze(-1)
 
         # Add noise to the motor speed measurement
         state['rotor_speeds'] += torch.normal(mean=torch.zeros(self.num_rotors, device=self.device),
@@ -227,44 +228,45 @@ class BatchedMultirotor(object):
 
         return state
 
-    def _s_dot_fn(self, t, s, cmd_rotor_speeds, debug=False):
+    def _s_dot_fn(self, t, s, cmd_rotor_speeds, idxs, debug=False):
         """
         Compute derivative of state for quadrotor given fixed control inputs as
         an autonomous ODE.
         """
 
-        state = BatchedMultirotor._unpack_state(s)
+        # so this will be zero for some stuff.
+        state = BatchedMultirotor._unpack_state(s, idxs, self.num_drones)
 
-        rotor_speeds = state['rotor_speeds']
+        rotor_speeds = state['rotor_speeds'][idxs]
         if debug:
             print(f"batched multirotor rotor speeds: {rotor_speeds}")
-        inertial_velocity = state['v']
-        wind_velocity = state['wind']
+        inertial_velocity = state['v'][idxs]
+        wind_velocity = state['wind'][idxs]
 
         # R = Rotation.from_quat(state['q']).as_matrix()
-        R = roma.unitquat_to_rotmat(state['q']).double()
+        R = roma.unitquat_to_rotmat(state['q'][idxs]).double()
 
         # Rotor speed derivative
-        rotor_accel = (1/self.tau_m)*(cmd_rotor_speeds - rotor_speeds)
+        rotor_accel = (1/self.tau_m)*(cmd_rotor_speeds[idxs] - rotor_speeds)
         if debug:
             print(f"multirotor s_dot_fn: rotor_accel: {rotor_accel}")
 
         # Position derivative.
-        x_dot = state['v']
+        x_dot = state['v'][idxs]
 
         # Orientation derivative.
-        q_dot = quat_dot(state['q'], state['w'])
+        q_dot = quat_dot(state['q'][idxs], state['w'][idxs])
 
         # Compute airspeed vector in the body frame
         body_airspeed_vector = R.transpose(1, 2)@(inertial_velocity - wind_velocity).unsqueeze(-1).double()
 
         body_airspeed_vector = body_airspeed_vector.squeeze(-1)
         if debug:
-            print(f"multirotor s_dot_fn: q_dot: {q_dot}")  # INCORRECT
+            print(f"multirotor s_dot_fn: q_dot: {q_dot}")
             print(f"multirotor s_dot_fn: body_airspeed_vector: {body_airspeed_vector}")  # CORRECT
 
         # Compute total wrench in the body frame based on the current rotor speeds and their location w.r.t. CoM
-        (FtotB, MtotB) = self.compute_body_wrench(state['w'], rotor_speeds, body_airspeed_vector)
+        (FtotB, MtotB) = self.compute_body_wrench(state['w'][idxs], rotor_speeds, body_airspeed_vector)
 
         # Rotate the force from the body frame to the inertial frame
         Ftot = R@FtotB.unsqueeze(-1)
@@ -273,7 +275,7 @@ class BatchedMultirotor(object):
         v_dot = (self.weight + Ftot.squeeze(-1)) / self.mass
 
         # Angular velocity derivative.
-        w = state['w'].double()
+        w = state['w'][idxs].double()
         w_hat = BatchedMultirotor.hat_map(w).permute(2, 0, 1)
         w_dot = self.inv_inertia @ (MtotB - (w_hat.double() @ (self.inertia @ w.unsqueeze(-1))).squeeze(-1)).unsqueeze(-1)
         if debug:
@@ -283,10 +285,10 @@ class BatchedMultirotor(object):
 
         # NOTE: the wind dynamics are currently handled in the wind_profile object. 
         # The line below doesn't do anything, as the wind state is assigned elsewhere. 
-        wind_dot = torch.zeros((self.num_drones, 3), device=self.device)
+        wind_dot = torch.zeros((len(idxs), 3), device=self.device)
 
         # Pack into vector of derivatives.
-        s_dot = torch.zeros((self.num_drones, 16+self.num_rotors,), device=self.device)
+        s_dot = torch.zeros((len(idxs), 16+self.num_rotors,), device=self.device)
         s_dot[:,0:3]   = x_dot
         s_dot[:,3:6]   = v_dot
         s_dot[:,6:10]  = q_dot
@@ -304,6 +306,8 @@ class BatchedMultirotor(object):
         The net force Ftot is represented in the body frame. 
         The net moment Mtot is represented in the body frame. 
         """
+        assert(body_rates.shape[0] == rotor_speeds.shape[0])
+        assert(body_rates.shape[0] == body_airspeed_vector.shape[0])
 
         num_drones = body_rates.shape[0]
         # Get the local airspeeds for each rotor
@@ -429,7 +433,6 @@ class BatchedMultirotor(object):
         norm = torch.linalg.norm(v, dim=-1)
         return norm
 
-    # TODO(hersh500): make this work with selected indexes.
     @classmethod
     def _unpack_state(cls, s, idxs, num_drones):
         """
@@ -442,18 +445,19 @@ class BatchedMultirotor(object):
         rotor_speeds = rotor speeds
         """
         # fill state with zeros, then replace with appropriate indexes.
-        state = {'x': torch.zeros(num_drones, 3),
-                 'v': torch.zeros(num_drones, 3),
-                 'q': torch.zeros(num_drones, 3),
-                 'w': torch.zeros(num_drones, 3),
-                 'wind': torch.zeros(num_drones, 3),
-                 'rotor_speeds': torch.zeros(num_drones, 3)}
-        state['x'][idxs] = s[idxs,0:3]
-        state['v'][idxs] = s[idxs,3:6]
-        state['q'][idxs] = s[idxs,6:10]
-        state['w'][idxs] = s[idxs,10:13]
-        state['wind'][idxs] = s[idxs,13:16]
-        state['rotor_speeds'][idxs] = s[idxs,16:]
+        state = {'x': torch.zeros(num_drones, 3).double(),
+                 'v': torch.zeros(num_drones, 3).double(),
+                 'q': torch.zeros(num_drones, 4).double(),
+                 'w': torch.zeros(num_drones, 3).double(),
+                 'wind': torch.zeros(num_drones, 3).double(),
+                 'rotor_speeds': torch.zeros(num_drones, 4).double()}
+        state['q'][...,-1] = 1  # make sure we're returning a valid quaternion
+        state['x'][idxs] = s[:,0:3]
+        state['v'][idxs] = s[:,3:6]
+        state['q'][idxs] = s[:,6:10]
+        state['w'][idxs] = s[:,10:13]
+        state['wind'][idxs] = s[:,13:16]
+        state['rotor_speeds'][idxs] = s[:,16:]
         return state
 
 
