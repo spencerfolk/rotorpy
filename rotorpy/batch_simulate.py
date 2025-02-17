@@ -24,7 +24,8 @@ def simulate_batch(world,
                    t_final,
                    t_step,
                    safety_margin,
-                   terminate=None):
+                   terminate=None,
+                   start_times=None):
     """
     Perform a vehicle simulation and return the numerical results.
     Note that, currently, compared to the normal simulate() function, simulate_batch() does not support
@@ -89,7 +90,10 @@ def simulate_batch(world,
     else:                    # Custom exit.
         normal_exit = terminate
 
-    time = [0]
+    if start_times is None:
+        time = [np.zeros(vehicles.num_drones)]
+    else:
+        time = [start_times]
     exit_status = np.array([None] * vehicles.num_drones)
     done = np.zeros(vehicles.num_drones, dtype=bool)
     running_idxs = np.arange(vehicles.num_drones)
