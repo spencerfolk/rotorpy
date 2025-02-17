@@ -86,7 +86,7 @@ def main():
     torch.multiprocessing.set_sharing_strategy('file_system')
     device = torch.device("cpu")
     #### Initial Drone States ####
-    num_drones = 100
+    num_drones = 2
     init_rotor_speed = 1788.53
     x0 = {'x': torch.zeros(num_drones,3).double(),
           'v': torch.zeros(num_drones, 3).double(),

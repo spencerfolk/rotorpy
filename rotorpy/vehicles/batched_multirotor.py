@@ -383,6 +383,7 @@ class BatchedMultirotor(object):
 
     # TODO(hersh500): for torch.jit.trace, this needs to be implemented fully in torch.
     # TODO(hersh500): this will be slow on gpu, due to numpy -> gpu data transfer.
+    # Won't work on numpy < 2.2.2 or torch < 2, I think!
     @classmethod
     def hat_map(cls, s):
         """

@@ -180,11 +180,11 @@ def traj_end_exit(initial_state, trajectory, using_vio = False):
         if using_vio:
             # set larger threshold for VIO due to noisy measurements
             # can't pass multiple arrays into torch.logical_and()
-            cond1 = torch.logical_and(time >= min_times, torch.linalg.norm(state['x'] - xf, dim=-1).cpu() < 1)
+            cond1 = torch.logical_and(torch.from_numpy(time) >= min_times, torch.linalg.norm(state['x'] - xf, dim=-1).cpu() < 1)
             cond2 = torch.logical_and(torch.linalg.norm(state['v'], dim=-1).cpu() <= 1, angle <= 1)
             cond = torch.logical_and(cond1, cond2).cpu().numpy()
         else:
-            cond1 = torch.logical_and(time >= min_times, torch.linalg.norm(state['x'] - xf, dim=-1).cpu() < 0.02)
+            cond1 = torch.logical_and(torch.from_numpy(time) >= min_times, torch.linalg.norm(state['x'] - xf, dim=-1).cpu() < 0.02)
             cond2 = torch.logical_and(torch.linalg.norm(state['v'], dim=-1).cpu() <= 0.02, angle <= 0.02)
             cond = torch.logical_and(cond1, cond2).cpu().numpy()
         return np.where(cond, True, False)

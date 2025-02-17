@@ -207,10 +207,14 @@ class SE3ControlBatch(object):
             self.kp_att = 544
         else:
             self.kp_att = kp_att.to(self.device).double()
+            if len(self.kp_att.shape) < 2:
+                self.kp_att = self.kp_att.unsqueeze(-1)
         if kd_att is None:
             self.kd_att = 46.64
         else:
             self.kd_att = kd_att.to(self.device).double()
+            if len(self.kd_att.shape) < 2:
+                self.kd_att = self.kd_att.unsqueeze(-1)
 
         self.kp_vel = 0.1 * self.kp_pos
 
@@ -272,6 +276,7 @@ class SE3ControlBatch(object):
 
         Iw = self.inertia.unsqueeze(0).double() @ states['w'][idxs].unsqueeze(-1).double()
         tmp = -self.kp_att[idxs] * att_err - self.kd_att[idxs] * w_err
+        # print(f"tmp shape is {tmp.shape}")
         u2 = (self.inertia.unsqueeze(0).double() @ tmp.unsqueeze(-1)).squeeze(-1) + torch.cross(states['w'][idxs], Iw.squeeze(-1), dim=-1)
 
         TM = torch.cat([u1.unsqueeze(-1), u2], dim=-1)
