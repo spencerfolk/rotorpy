@@ -5,6 +5,7 @@ A Python-based multirotor simulation environment with aerodynamic wrenches, usef
 **NEW in `v1.1.0`**: RotorPy now includes a customizable [Gymnasium](https://github.com/Farama-Foundation/Gymnasium) environment found in the new `rotorpy/learning/` module. 
 
 <p align="center"><img src="/media/ppo_hover_20k.gif" width="32%"/><img src="/media/ppo_hover_600k.gif" width="32%"/><img src="/media/ppo_hover_1000k.gif" width="32%"/></p>
+
 ## Vectorized Simulation on CPU/GPU
 This branch implements the RotorPy Multirotor dynamics in PyTorch to enable fast simulation of multiple drones in parallel. For examples on how this is done, see `tests/test_batched_simulation.py`. 
 
