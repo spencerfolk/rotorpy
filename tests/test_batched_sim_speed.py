@@ -70,9 +70,33 @@ def run_sequential_sim(traj, world, x0, dt):
 
 # NOTE(hersh500): in this test, every drone in the batch follows the same reference trajectory. This means that all drones should
 # finish at the same time. In practice, if you have a different trajectory for each drone, some will finish earlier than others,
-# which will change the actual average FPS you obtain with the batched simulation.
+# which will change the actual average FPS you obtain with the batched simulation (will probably make it worse).
+
+# Example results on a machine with AMD Ryzen 9 3900X, 32GB RAM, NVidia 2080 Super:
+# seq fps was 593.8719228751526
+# For batch size 2, CPU FPS = 23.773772579654764
+# For batch size 10, CPU FPS = 116.61066056343323
+# For batch size 20, CPU FPS = 229.57299463942917
+# For batch size 50, CPU FPS = 553.3820867384225
+# For batch size 100, CPU FPS = 1093.4404182380724
+# For batch size 1000, CPU FPS = 6039.756926312764
+# For batch size 5000, CPU FPS = 9032.18263126089
+# For batch size 10000, CPU FPS = 9407.794168614675
+# For batch size 20000, CPU FPS = 9713.704835954573
+# For batch size 2, GPU FPS = 11.736757475900584
+# For batch size 10, GPU FPS = 57.04842738612363
+# For batch size 20, GPU FPS = 109.72285410258087
+# For batch size 50, GPU FPS = 280.74316676064575
+# For batch size 100, GPU FPS = 551.4283540610186
+# For batch size 1000, GPU FPS = 5208.497736491586
+# For batch size 5000, GPU FPS = 20707.445553670772
+# For batch size 10000, GPU FPS = 31844.703721550744
+# For batch size 20000, GPU FPS = 39107.1536285256
 def main():
-    torch.set_num_threads(1)  # necessary whenever using batched simulation
+    # Performance for larger (>5000) batch sizes degrades on CPU when you do this (and don't use multiprocessing),
+    # But this step is necessary whenever using batched simulation with CPU multiprocessing.
+    torch.set_num_threads(1)
+
     batch_sizes = [2, 10, 20, 50, 100, 1000, 5000, 10000, 20000]
     cpu_fps = []
     gpu_fps = []

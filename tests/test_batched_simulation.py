@@ -149,6 +149,7 @@ def main():
 
     dt = 0.01
 
+    # CPU multiprocessing example
     # mp_batched_start_time = time.time()
     # num_mp_sims = 10
     # args = [(BatchedMinSnap(trajectories, device=device), BatchedMultirotor(quad_params, num_drones, dict(x0), device=device), SE3ControlBatch(quad_params, device=device), dict(x0)) for _ in range(num_mp_sims)]
