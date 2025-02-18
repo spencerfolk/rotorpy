@@ -7,7 +7,7 @@ A Python-based multirotor simulation environment with aerodynamic wrenches, usef
 <p align="center"><img src="/media/ppo_hover_20k.gif" width="32%"/><img src="/media/ppo_hover_600k.gif" width="32%"/><img src="/media/ppo_hover_1000k.gif" width="32%"/></p>
 
 ## Vectorized Simulation on CPU/GPU
-This branch implements the RotorPy Multirotor dynamics in PyTorch to enable fast simulation of multiple drones in parallel. For examples on how this is done, see `tests/test_batched_simulation.py`. 
+This branch implements the RotorPy Multirotor dynamics in PyTorch to enable fast simulation of multiple drones in parallel. For examples on how to use the vectorized simulation, see `tests/test_batched_simulation.py`. 
 
 The code in `tests/test_batched_sim_speed.py` evaluates the speedup obtained by vectorizing the simulation on CPU vs GPU. In the best-case scenario in testing, the vectorized simulation can run at an amortized ~39k FPS on the GPU.
 <img src="media/CPU_vs_GPU_rotorpy_batch_perf.png">
