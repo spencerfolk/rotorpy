@@ -328,7 +328,7 @@ class BatchedMultirotor(object):
             # Pitching flapping moment acting at each propeller hub.
             M_flap = BatchedMultirotor.hat_map(local_airspeeds.transpose(1, 2).reshape(num_drones*4, 3))
             M_flap = M_flap.permute(2, 0, 1).reshape(num_drones, 4, 3, 3).double()
-            M_flap = M_flap@torch.tensor([0,0,1.0]).double()
+            M_flap = M_flap@torch.tensor([0,0,1.0], device=self.device).double()
             M_flap = -self.k_flap*rotor_speeds.unsqueeze(1)*M_flap.transpose(-1, -2)
         else:
             D = torch.zeros(num_drones, 3, device=self.device)
@@ -381,8 +381,7 @@ class BatchedMultirotor(object):
                          1-2*(q[0]**2  +q[1]**2)    ])
 
 
-    # TODO(hersh500): for torch.jit.trace, this needs to be implemented fully in torch.
-    # TODO(hersh500): this will be slow on gpu, due to numpy -> gpu data transfer.
+    # Slower on GPU until N >= 4e5
     # Won't work on numpy < 2.2.2 or torch < 2, I think!
     @classmethod
     def hat_map(cls, s):
@@ -392,20 +391,12 @@ class BatchedMultirotor(object):
         """
         device = s.device
         if len(s.shape) > 1:  # Vectorized implementation
-            s = s.cpu()
-            return torch.from_numpy(np.array([[ np.zeros(s.shape[0]), -s[:,2],  s[:,1]],
-                             [ s[:,2],     np.zeros(s.shape[0]), -s[:,0]],
-                             [-s[:,1],  s[:,0],     np.zeros(s.shape[0])]])).to(device)
-            # This is extremely slow/incorrect???
-            # s = s.unsqueeze(-1)
-            # hat = torch.cat([torch.zeros(s.shape[0], 1, device=device), -s[:, 2], s[:,1],
-            #                  s[:,2], torch.zeros(s.shape[0], 1, device=device), -s[:,0],
-            #                  -s[:,1], s[:,0], torch.zeros(s.shape[0], 1, device=device)], dim=1).view(3, 3, s.shape[0]).float()
-            # return hat
+            s = s.unsqueeze(-1)
+            hat = torch.cat([torch.zeros(s.shape[0], 1, device=device), -s[:, 2], s[:,1],
+                             s[:,2], torch.zeros(s.shape[0], 1, device=device), -s[:,0],
+                             -s[:,1], s[:,0], torch.zeros(s.shape[0], 1, device=device)], dim=0).view(3, 3, s.shape[0]).double()
+            return hat
         else:
-            # return torch.from_numpy(np.array([[    0, -s[2],  s[1]],
-            #                  [ s[2],     0, -s[0]],
-            #                  [-s[1],  s[0],     0]]))
             return torch.tensor([[0, -s[2], s[1]],
                                 [s[2], 0, -s[0]],
                                  [-s[1], s[0], 0]], device=device)
@@ -445,13 +436,14 @@ class BatchedMultirotor(object):
         wind = wind vector
         rotor_speeds = rotor speeds
         """
+        device = s.device
         # fill state with zeros, then replace with appropriate indexes.
-        state = {'x': torch.zeros(num_drones, 3).double(),
-                 'v': torch.zeros(num_drones, 3).double(),
-                 'q': torch.zeros(num_drones, 4).double(),
-                 'w': torch.zeros(num_drones, 3).double(),
-                 'wind': torch.zeros(num_drones, 3).double(),
-                 'rotor_speeds': torch.zeros(num_drones, 4).double()}
+        state = {'x': torch.zeros(num_drones, 3, device=device).double(),
+                 'v': torch.zeros(num_drones, 3, device=device).double(),
+                 'q': torch.zeros(num_drones, 4, device=device).double(),
+                 'w': torch.zeros(num_drones, 3, device=device).double(),
+                 'wind': torch.zeros(num_drones, 3, device=device).double(),
+                 'rotor_speeds': torch.zeros(num_drones, 4, device=device).double()}
         state['q'][...,-1] = 1  # make sure we're returning a valid quaternion
         state['x'][idxs] = s[:,0:3]
         state['v'][idxs] = s[:,3:6]

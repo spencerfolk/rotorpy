@@ -5,6 +5,7 @@ from numpy.linalg import norm
 from scipy.spatial.transform import Rotation
 import roma
 import torch
+import time
 
 import rotorpy.wind.default_winds
 from rotorpy.controllers.quadrotor_control import SE3ControlBatch
@@ -25,7 +26,8 @@ def simulate_batch(world,
                    t_step,
                    safety_margin,
                    terminate=None,
-                   start_times=None):
+                   start_times=None,
+                   print_fps=False):
     """
     Perform a vehicle simulation and return the numerical results.
     Note that, currently, compared to the normal simulate() function, simulate_batch() does not support
@@ -91,9 +93,9 @@ def simulate_batch(world,
         normal_exit = terminate
 
     if start_times is None:
-        time = [np.zeros(vehicles.num_drones)]
+        time_array = [np.zeros(vehicles.num_drones)]
     else:
-        time = [start_times]
+        time_array = [start_times]
     exit_status = np.array([None] * vehicles.num_drones)
     done = np.zeros(vehicles.num_drones, dtype=bool)
     running_idxs = np.arange(vehicles.num_drones)
@@ -103,17 +105,19 @@ def simulate_batch(world,
     mocap_measurements = []
     imu_gt = []
     state_estimate = []
-    flat    = [trajectories.update(time[-1])]
-    control = [controller.update(time[-1], state[-1], flat[-1], idxs=None)]
+    flat    = [trajectories.update(time_array[-1])]
+    control = [controller.update(time_array[-1], state[-1], flat[-1], idxs=None)]
     # state_dot =  vehicles.statedot(state[0], control[0], t_step)
     step = 0
+    total_num_frames = 0
+    total_time = 0
 
-    # how to resolve how to compute exit status??
     while True:
+        step_start_time = time.time()
         prev_status = np.array(done, dtype=bool)
         se = safety_exit(world, safety_margin, state[-1], flat[-1], control[-1])
-        ne = normal_exit(time[-1], state[-1])
-        te = time_exit(time[-1], t_final)
+        ne = normal_exit(time_array[-1], state[-1])
+        te = time_exit(time_array[-1], t_final)
         exit_status[running_idxs] = np.where(se[running_idxs], ExitStatus.OVER_SPEED, None)  # Not exactly correct.
         exit_status[running_idxs] = np.where(ne[running_idxs], ExitStatus.COMPLETE, None)
         exit_status[running_idxs] = np.where(te[running_idxs], ExitStatus.TIMEOUT, None)
@@ -127,20 +131,26 @@ def simulate_batch(world,
             break
         running_idxs = np.nonzero(np.logical_not(done))[0]
 
-        time.append(time[-1] + t_step)
-        state[-1]['wind'] = wind_profile.update(time[-1], state[-1]['x'])
+        time_array.append(time_array[-1] + t_step)
+        state[-1]['wind'] = wind_profile.update(time_array[-1], state[-1]['x'])
         state.append(vehicles.step(state[-1], control[-1], t_step, idxs=running_idxs.flatten()))
-        flat.append(trajectories.update(time[-1]))
-        control.append(controller.update(time[-1], state[-1], flat[-1], idxs=running_idxs.flatten()))
+        flat.append(trajectories.update(time_array[-1]))
+        control.append(controller.update(time_array[-1], state[-1], flat[-1], idxs=running_idxs.flatten()))
         # state_dot = vehicles.statedot(state[-1], control[-1], t_step)
         step += 1
-
-    time    = np.array(time, dtype=float)
+        fps = len(running_idxs) / (time.time() - step_start_time)
+        total_time += time.time() - step_start_time
+        total_num_frames += len(running_idxs)
+        if print_fps:
+            print(f"FPS at step {step} = {fps}")
+    if print_fps:
+        print(f"Average FPS of batched simulation was {total_num_frames/total_time}")
+    time_array    = np.array(time_array, dtype=float)
     state   = merge_dicts(state)
     control         = merge_dicts(control)
     flat            = merge_dicts(flat)
 
-    return (time, state, control, flat, exit_status, done_times)
+    return (time_array, state, control, flat, exit_status, done_times)
 
 
 def merge_dicts(dicts_in):
@@ -169,23 +179,24 @@ def traj_end_exit(initial_state, trajectory, using_vio = False):
 
     xf = trajectory.update(np.inf)['x']
     yawf = trajectory.update(np.inf)['yaw'].unsqueeze(-1)  # (num_drones, 1)
-    rotf = roma.rotvec_to_rotmat(yawf*torch.tensor([0,0,1]).unsqueeze(0))
+    rotf = roma.rotvec_to_rotmat(yawf*torch.tensor([0,0,1], device=initial_state['x'].device).unsqueeze(0))
     min_times = torch.all(torch.eq(initial_state['x'], xf), dim=-1).float()
 
     def exit_fn(time, state):
         cur_attitudes = roma.unitquat_to_rotmat(state['q'])
         err_attitudes = rotf * torch.linalg.inv(cur_attitudes)
         angle = torch.linalg.norm(roma.rotmat_to_rotvec(err_attitudes))
+        device = state['x'].device
         # Success is reaching near-zero speed with near-zero position error.
         if using_vio:
             # set larger threshold for VIO due to noisy measurements
             # can't pass multiple arrays into torch.logical_and()
-            cond1 = torch.logical_and(torch.from_numpy(time) >= min_times, torch.linalg.norm(state['x'] - xf, dim=-1).cpu() < 1)
-            cond2 = torch.logical_and(torch.linalg.norm(state['v'], dim=-1).cpu() <= 1, angle <= 1)
+            cond1 = torch.logical_and(torch.from_numpy(time).to(device) >= min_times, torch.linalg.norm(state['x'] - xf, dim=-1) < 1)
+            cond2 = torch.logical_and(torch.linalg.norm(state['v'], dim=-1) <= 1, angle <= 1)
             cond = torch.logical_and(cond1, cond2).cpu().numpy()
         else:
-            cond1 = torch.logical_and(torch.from_numpy(time) >= min_times, torch.linalg.norm(state['x'] - xf, dim=-1).cpu() < 0.02)
-            cond2 = torch.logical_and(torch.linalg.norm(state['v'], dim=-1).cpu() <= 0.02, angle <= 0.02)
+            cond1 = torch.logical_and(torch.from_numpy(time).to(device) >= min_times, torch.linalg.norm(state['x'] - xf, dim=-1) < 0.02)
+            cond2 = torch.logical_and(torch.linalg.norm(state['v'], dim=-1) <= 0.02, angle <= 0.02)
             cond = torch.logical_and(cond1, cond2).cpu().numpy()
         return np.where(cond, True, False)
     return exit_fn

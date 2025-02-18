@@ -23,13 +23,13 @@ classifiers = [
 dependencies = [
     'cvxopt',
     'matplotlib',
-    'numpy',
+    'numpy>=2.2.2',
     'scipy',
     'pandas',
     'tqdm',
     'gymnasium',
     'roma',
-    'torch[opt-einsum]',
+    'torch[opt-einsum] >= 2.6.0',
     'torchdiffeq'
 ]
 

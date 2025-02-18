@@ -13,6 +13,10 @@ from rotorpy.utils.trajgen_utils import sample_waypoints
 from rotorpy.world import World
 from rotorpy.wind.default_winds import NoWind
 from rotorpy.batch_simulate import simulate_batch
+from rotorpy.simulate import simulate
+from rotorpy.sensors.imu import Imu
+from rotorpy.sensors.external_mocap import MotionCapture
+from rotorpy.estimators.nullestimator import NullEstimator
 
 
 def batched_worker(trajectory, vehicle, controller, x0):
@@ -84,16 +88,19 @@ def test_simulate_fn():
 
 def main():
     torch.multiprocessing.set_sharing_strategy('file_system')
+    torch.set_num_threads(1)
+    # device = torch.device("cuda:0")
     device = torch.device("cpu")
+
     #### Initial Drone States ####
-    num_drones = 2
+    num_drones = 100
     init_rotor_speed = 1788.53
-    x0 = {'x': torch.zeros(num_drones,3).double(),
-          'v': torch.zeros(num_drones, 3).double(),
-          'q': torch.tensor([0, 0, 0, 1]).repeat(num_drones, 1).double(), # [i,j,k,w]
-          'w': torch.zeros(num_drones, 3).double(),
-          'wind': torch.zeros(num_drones, 3).double(),  # Since wind is handled elsewhere, this value is overwritten
-          'rotor_speeds': torch.tensor([init_rotor_speed, init_rotor_speed, init_rotor_speed, init_rotor_speed]).repeat(num_drones, 1).double()}
+    x0 = {'x': torch.zeros(num_drones,3, device=device).double(),
+          'v': torch.zeros(num_drones, 3, device=device).double(),
+          'q': torch.tensor([0, 0, 0, 1], device=device).repeat(num_drones, 1).double(), # [i,j,k,w]
+          'w': torch.zeros(num_drones, 3, device=device).double(),
+          'wind': torch.zeros(num_drones, 3, device=device).double(),  # Since wind is handled elsewhere, this value is overwritten
+          'rotor_speeds': torch.tensor([init_rotor_speed, init_rotor_speed, init_rotor_speed, init_rotor_speed], device=device).repeat(num_drones, 1).double()}
 
     x0_single = {'x': np.array([0, 0, 0]),
      'v': np.zeros(3, ),
@@ -104,12 +111,13 @@ def main():
 
      #### Generate Trajectories ####
     world = World({"bounds": {"extents": [-10, 10, -10, 10, -10, 10]}, "blocks": []})
-    num_waypoints = 3
+    num_waypoints = 4
     v_avg_des = 2.0
     positions = x0['x']
     trajectories = []
     ref_traj_gen_start_time = time.time()
     num_done = 0
+    np.random.seed(10)   # deterministic for testing purposes
     while num_done < num_drones:
         waypoints = np.array(sample_waypoints(num_waypoints, world, start_waypoint=positions[num_done].cpu().numpy(),
                                               min_distance=1.0, max_distance=2.0))
@@ -127,7 +135,7 @@ def main():
     kd_att = torch.tensor([46.64]).repeat(num_drones, 1).double()
 
     batched_trajs = BatchedMinSnap(trajectories, device=device)
-    controller = SE3ControlBatch(quad_params, device=device,
+    controller = SE3ControlBatch(quad_params, num_drones, device=device,
                                  kp_pos=kp_pos,
                                  kd_pos=kd_pos,
                                  kp_att=kp_att,
@@ -139,20 +147,7 @@ def main():
     vehicle_single = Multirotor(quad_params, initial_state=x0_single)
     vehicle_single.motor_noise = 0
 
-    t = 0
     dt = 0.01
-    flats = [batched_trajs.update(t)]
-    states = [x0]
-    controls = [controller.update(t, states[-1], flats[-1])]
-
-    batch_start_time = time.time()
-    t_fs = np.array([trajectory.t_keyframes[-1] for trajectory in trajectories])
-    while t < np.max(t_fs):
-        t += dt
-        states.append(vehicle.step(states[-1], controls[-1], dt))
-        flats.append(batched_trajs.update(t))
-        controls.append(controller.update(t, states[-1], flats[-1]))
-    print(f"time to simulate {num_drones} batched: {time.time() - batch_start_time}")
 
     # mp_batched_start_time = time.time()
     # num_mp_sims = 10
@@ -165,26 +160,38 @@ def main():
     t_fs = np.array([trajectory.t_keyframes[-1] for trajectory in trajectories])
 
     wind_profile = NoWind(num_drones)
-    results = simulate_batch(world, x0, vehicle, controller, batched_trajs, wind_profile, t_fs, 0.01, 0.25)
+    results = simulate_batch(world, x0, vehicle, controller, batched_trajs, wind_profile, t_fs, dt, 0.25, print_fps=False)
     simulate_fn_states = results[1]
     simulate_fn_done_times = results[-1]
     exit_statuses = results[-2]
     print(f"time to simulate {num_drones} batched using simulate() fn infra : {time.time() - sim_fn_start_time}")
 
-    series_start_time = time.time()
     all_seq_states = []
+    mocap_params = {'pos_noise_density': 0.0005*np.ones((3,)),  # noise density for position
+                    'vel_noise_density': 0.0010*np.ones((3,)),          # noise density for velocity
+                    'att_noise_density': 0.0005*np.ones((3,)),          # noise density for attitude
+                    'rate_noise_density': 0.0005*np.ones((3,)),         # noise density for body rates
+                    'vel_artifact_max': 5,                              # maximum magnitude of the artifact in velocity (m/s)
+                    'vel_artifact_prob': 0.001,                         # probability that an artifact will occur for a given velocity measurement
+                    'rate_artifact_max': 1,                             # maximum magnitude of the artifact in body rates (rad/s)
+                    'rate_artifact_prob': 0.0002                        # probability that an artifact will occur for a given rate measurement
+                    }
+    mocap = MotionCapture(sampling_rate=int(1/dt), mocap_params=mocap_params, with_artifacts=False)
+
+    series_start_time = time.time()
+    total_time = 0
+    total_frames = 0
     for d in range(num_drones):
-        t = 0
-        flats_s1 = [trajectories[d].update(t)]
-        states_s1 = [x0_single]
-        controls_s1 = [controller_single.update(t, states_s1[-1], flats_s1[-1])]
-        while t < trajectories[d].t_keyframes[-1]:
-            t += dt
-            states_s1.append(vehicle_single.step(states_s1[-1], controls_s1[-1], dt))
-            flats_s1.append(trajectories[d].update(t))
-            controls_s1.append(controller_single.update(t, states_s1[-1], flats_s1[-1]))
-        all_seq_states.append(states_s1)
+        start_time = time.time()
+        single_result = simulate(world, x0_single, vehicle_single, controller_single, trajectories[d],
+                                 NoWind(), Imu(sampling_rate=int(1/dt)), mocap, NullEstimator(),
+                                 trajectories[d].t_keyframes[-1], dt, 0.25, use_mocap=False, print_fps=False)
+
+        all_seq_states.append(single_result[1])
+        total_frames += len(single_result[0])
+        total_time += time.time() - start_time
     print(f"time to simulate {num_drones} sequentially: {time.time() - series_start_time}")
+    print(f"average fps of series simulation was {total_frames/total_time}")
 
     num_to_plot = 3
     fig, ax = plt.subplots(num_to_plot, 3)
@@ -192,9 +199,9 @@ def main():
     dims = ["x", "y", "z"]
     for j, sim_idx in enumerate(which_sim):
         for dimension in range(3):
-            ax[j][dimension].plot([state['x'][sim_idx][dimension].cpu().numpy() for state in states], label='batched')
-            ax[j][dimension].plot([state['x'][dimension] for state in all_seq_states[sim_idx]], label='sequential')
-            ax[j][dimension].plot(simulate_fn_states['x'][:simulate_fn_done_times[sim_idx], sim_idx, dimension], label='simulate')
+            ax[j][dimension].plot([trajectories[sim_idx].update(t)['x'][dimension] for t in np.arange(trajectories[sim_idx].t_keyframes[-1], step=dt)], label='reference')
+            ax[j][dimension].plot(all_seq_states[int(sim_idx)]['x'][:,dimension], label='sequential')
+            ax[j][dimension].plot(simulate_fn_states['x'][:simulate_fn_done_times[sim_idx], int(sim_idx), dimension], label='batched')
             ax[j][dimension].legend()
             ax[j][dimension].set_ylabel(dims[dimension])
     fig.tight_layout()

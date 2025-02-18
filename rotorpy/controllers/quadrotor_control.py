@@ -179,7 +179,7 @@ class SE3Control(object):
 
 class SE3ControlBatch(object):
     # eventually, we could batch the quad params as well.
-    def __init__(self, quad_params, device, kp_pos=None, kd_pos=None, kp_att=None, kd_att=None):
+    def __init__(self, quad_params, num_drones, device, kp_pos=None, kd_pos=None, kp_att=None, kd_att=None):
         '''
         kp_pos: torch.Tensor of shape (num_drones, 3) or (1, 3)
         kd_pos: torch.Tensor of shape (num_drones, 3) or (1, 3)
@@ -196,21 +196,21 @@ class SE3ControlBatch(object):
 
         # Gains
         if kp_pos is None:
-            self.kp_pos = torch.tensor([6.5, 6.5, 15], device=self.device).unsqueeze(0)
+            self.kp_pos = torch.tensor([6.5, 6.5, 15], device=self.device).repeat(num_drones, 1).double()
         else:
             self.kp_pos = kp_pos.to(self.device).double()
         if kd_pos is None:
-            self.kd_pos = torch.tensor([4.0, 4.0, 9], device=self.device).unsqueeze(0)
+            self.kd_pos = torch.tensor([4.0, 4.0, 9], device=self.device).repeat(num_drones, 1).double()
         else:
             self.kd_pos = kd_pos.to(self.device).double()
         if kp_att is None:
-            self.kp_att = 544
+            self.kp_att = torch.tensor([544], device=device).repeat(num_drones, 1).double()
         else:
             self.kp_att = kp_att.to(self.device).double()
             if len(self.kp_att.shape) < 2:
                 self.kp_att = self.kp_att.unsqueeze(-1)
         if kd_att is None:
-            self.kd_att = 46.64
+            self.kd_att = torch.tensor([46.64], device=device).repeat(num_drones, 1).double()
         else:
             self.kd_att = kd_att.to(self.device).double()
             if len(self.kd_att.shape) < 2:
@@ -301,13 +301,14 @@ class SE3ControlBatch(object):
 
     @classmethod
     def _unpack_control(cls, cmd_motor_speeds, u1, u2, cmd_q, cmd_w, cmd_v, idxs, num_drones):
+        device = cmd_motor_speeds.device
         # fill state with zeros, then replace with appropriate indexes.
-        ctrl = {'cmd_motor_speeds': torch.zeros(num_drones, 4, dtype=torch.double),
-                 'cmd_thrust': torch.zeros(num_drones, 1, dtype=torch.double),
-                 'cmd_moment': torch.zeros(num_drones, 3, dtype=torch.double),
-                 'cmd_q': torch.zeros(num_drones, 4, dtype=torch.double),
-                 'cmd_w': torch.zeros(num_drones, 3, dtype=torch.double),
-                 'cmd_v': torch.zeros(num_drones, 3, dtype=torch.double)}
+        ctrl = {'cmd_motor_speeds': torch.zeros(num_drones, 4, dtype=torch.double, device=device),
+                 'cmd_thrust': torch.zeros(num_drones, 1, dtype=torch.double, device=device),
+                 'cmd_moment': torch.zeros(num_drones, 3, dtype=torch.double, device=device),
+                 'cmd_q': torch.zeros(num_drones, 4, dtype=torch.double, device=device),
+                 'cmd_w': torch.zeros(num_drones, 3, dtype=torch.double, device=device),
+                 'cmd_v': torch.zeros(num_drones, 3, dtype=torch.double, device=device)}
 
         ctrl['cmd_motor_speeds'][idxs] = cmd_motor_speeds
         ctrl['cmd_thrust'][idxs] = u1
