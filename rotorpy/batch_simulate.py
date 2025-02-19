@@ -42,6 +42,9 @@ def simulate_batch(world,
             the location of trajectory with t=inf. If False, never terminate
             before timeout or error. If a function, terminate when returns not
             0.
+        start_times: array (B,) indicating the times at which each drone in the batch should start. Useful if the
+            different drones start at different points along their reference trajectories. Defaults to 0 for all if None.
+        print_fps: bool, whether or not to print the FPS achieved by the simulation at each step.
 
     Outputs:
         time, seconds, shape=(num_drones, N,) where N is the maximum number of timesteps by any drone in the batch
