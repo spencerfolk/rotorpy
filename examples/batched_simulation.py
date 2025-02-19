@@ -7,7 +7,7 @@ import torch.multiprocessing as mp
 from rotorpy.trajectories.minsnap import MinSnap, BatchedMinSnap
 from rotorpy.vehicles.batched_multirotor import BatchedMultirotor, merge_rotorpy_states, merge_flat_outputs
 from rotorpy.vehicles.multirotor import Multirotor
-from rotorpy.controllers.quadrotor_control import SE3ControlBatch, SE3Control
+from rotorpy.controllers.quadrotor_control import BatchedSE3Control, SE3Control
 from rotorpy.vehicles.crazyflie_params import quad_params
 from rotorpy.utils.trajgen_utils import sample_waypoints
 from rotorpy.world import World
@@ -75,7 +75,7 @@ def test_simulate_fn():
             continue
 
     batched_trajs = BatchedMinSnap(trajectories, device=device)
-    controller = SE3ControlBatch(quad_params, device=device)
+    controller = BatchedSE3Control(quad_params, num_drones, device=device)
     vehicle = BatchedMultirotor(quad_params, num_drones, x0, device=device)
 
     t_fs = np.array([trajectory.t_keyframes[-1] for trajectory in trajectories])
@@ -135,11 +135,11 @@ def main():
     kd_att = torch.tensor([46.64]).repeat(num_drones, 1).double()
 
     batched_trajs = BatchedMinSnap(trajectories, device=device)
-    controller = SE3ControlBatch(quad_params, num_drones, device=device,
-                                 kp_pos=kp_pos,
-                                 kd_pos=kd_pos,
-                                 kp_att=kp_att,
-                                 kd_att=kd_att)
+    controller = BatchedSE3Control(quad_params, num_drones, device=device,
+                                   kp_pos=kp_pos,
+                                   kd_pos=kd_pos,
+                                   kp_att=kp_att,
+                                   kd_att=kd_att)
     vehicle = BatchedMultirotor(quad_params, num_drones, x0, device=device)
     print(f"Time to Generate reference trajectories: {time.time() - ref_traj_gen_start_time}")
 

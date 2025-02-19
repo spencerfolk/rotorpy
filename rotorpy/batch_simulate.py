@@ -1,25 +1,19 @@
-from enum import Enum
 import copy
 import numpy as np
-from numpy.linalg import norm
-from scipy.spatial.transform import Rotation
 import roma
 import torch
 import time
 
 import rotorpy.wind.default_winds
-from rotorpy.controllers.quadrotor_control import SE3ControlBatch
+from rotorpy.controllers.quadrotor_control import BatchedSE3Control
 from rotorpy.vehicles.batched_multirotor import BatchedMultirotor
 from rotorpy.simulate import ExitStatus
 
-# exitstatus_array = np.array([0, ExitStatus.COMPLETE, ExitStatus.TIMEOUT, ExitStatus.INF_VALUE,
-#                              ExitStatus.NAN_VALUE, ExitStatus.OVER_SPEED, ExitStatus.OVER_SPIN,
-#                              ExitStatus.FLY_AWAY, ExitStatus.COLLISION])
 
 def simulate_batch(world,
                    initial_states,
                    vehicles: BatchedMultirotor,
-                   controller: SE3ControlBatch,
+                   controller: BatchedSE3Control,
                    trajectories,
                    wind_profile,
                    t_final,
@@ -29,21 +23,20 @@ def simulate_batch(world,
                    start_times=None,
                    print_fps=False):
     """
-    Perform a vehicle simulation and return the numerical results.
+    Simultaneously performs many vehicle simulations and returns the numerical results.
     Note that, currently, compared to the normal simulate() function, simulate_batch() does not support
     IMU measurements, mocap, or the state estimator.
 
     Inputs:
         world, a class representing the world it is flying in, including objects and world bounds. 
-        initial_state, a dict defining the vehicle initial conditions with appropriate keys
-        vehicle, Vehicle object containing the dynamics
+        initial_states, a dict defining the vehicle initial conditions with appropriate keys
+        vehicles, Vehicle object containing the dynamics
         controller, Controller object containing the controller
-        trajectory, Trajectory object containing the trajectory to follow
+        trajectories, Trajectory object containing the trajectories to follow
         wind_profile, Wind Profile object containing the wind generator. 
-        t_final, maximum duration of simulation, s
-        t_step, the time between each step in the simulator, s
+        t_final, array of maximum simulation durations for each vehicle in the batch, s
+        t_step, the time between each step in the simulator, s (shared across drones)
         safety_margin, the radius of the ball surrounding the vehicle position to determine if a collision occurs
-        imu, IMU object that generates accelerometer and gyroscope readings from the vehicle state
         terminate, None, False, or a function of time and state that returns
             ExitStatus. If None (default), terminate when hover is reached at
             the location of trajectory with t=inf. If False, never terminate
@@ -51,9 +44,9 @@ def simulate_batch(world,
             0.
 
     Outputs:
-        time, seconds, shape=(N,)
+        time, seconds, shape=(num_drones, N,) where N is the maximum number of timesteps by any drone in the batch
         state, a dict describing the state history with keys
-            x, position, m, shape=(N,B,3)
+            x, position, m, shape=(N,B,3) where B is the number of drones in the batch
             v, linear velocity, m/s, shape=(N,B,3)
             q, quaternion [i,j,k,w], shape=(N,B,4)
             w, angular velocity, rad/s, shape=(N,B,3)
@@ -71,13 +64,12 @@ def simulate_batch(world,
             x_ddddot, snap, m/s**4
             yaw,      yaw angle, rad
             yaw_dot,  yaw rate, rad/s
-        exit_times, an array indicating at which timestep (not time!) each vehicle in the batch completed its sim, shape = (B)
-        exit_status, an ExitStatus enum indicating the reason for termination.
+        exit_status, an array of ExitStatus enums indicating the reason for termination for each drone.
+        exit_timesteps, an array indicating at which timestep (not time!) each vehicle in the batch completed its sim, shape = (B)
     """
 
-    # Coerce entries of initial state into torch arrays, if they are not already.
-    # initial_states = {k: np.array(v) for k, v in initial_states.items()}
     assert(torch.is_tensor(initial_states[k]) for k in initial_states.keys())
+
     if wind_profile is None:
         wind_profile = rotorpy.wind.default_winds.NoWind(vehicles.num_drones)
     assert(wind_profile.num_drones == vehicles.num_drones)
@@ -99,15 +91,10 @@ def simulate_batch(world,
     exit_status = np.array([None] * vehicles.num_drones)
     done = np.zeros(vehicles.num_drones, dtype=bool)
     running_idxs = np.arange(vehicles.num_drones)
-    done_times = np.zeros(vehicles.num_drones, dtype=int)
+    exit_timesteps = np.zeros(vehicles.num_drones, dtype=int)
     state   = [copy.deepcopy(initial_states)]
-    imu_measurements = []
-    mocap_measurements = []
-    imu_gt = []
-    state_estimate = []
     flat    = [trajectories.update(time_array[-1])]
     control = [controller.update(time_array[-1], state[-1], flat[-1], idxs=None)]
-    # state_dot =  vehicles.statedot(state[0], control[0], t_step)
     step = 0
     total_num_frames = 0
     total_time = 0
@@ -126,7 +113,7 @@ def simulate_batch(world,
         done = np.logical_or(done, ne)
         done = np.logical_or(done, te)
         done_this_iter = np.logical_xor(prev_status, done)
-        done_times[done_this_iter] = step
+        exit_timesteps[done_this_iter] = step
         if np.all(done):
             break
         running_idxs = np.nonzero(np.logical_not(done))[0]
@@ -136,7 +123,6 @@ def simulate_batch(world,
         state.append(vehicles.step(state[-1], control[-1], t_step, idxs=running_idxs.flatten()))
         flat.append(trajectories.update(time_array[-1]))
         control.append(controller.update(time_array[-1], state[-1], flat[-1], idxs=running_idxs.flatten()))
-        # state_dot = vehicles.statedot(state[-1], control[-1], t_step)
         step += 1
         fps = len(running_idxs) / (time.time() - step_start_time)
         total_time += time.time() - step_start_time
@@ -150,7 +136,7 @@ def simulate_batch(world,
     control         = merge_dicts(control)
     flat            = merge_dicts(flat)
 
-    return (time_array, state, control, flat, exit_status, done_times)
+    return (time_array, state, control, flat, exit_status, exit_timesteps)
 
 
 def merge_dicts(dicts_in):
@@ -171,7 +157,7 @@ def merge_dicts(dicts_in):
 
 def traj_end_exit(initial_state, trajectory, using_vio = False):
     """
-    Returns a exit function. The exit function returns an exit status message if
+    Returns a exit function. The exit function returns True if
     the quadrotor is near hover at the end of the provided trajectory. If the
     initial state is already at the end of the trajectory, the simulation will
     run for at least one second before testing again.
@@ -190,7 +176,6 @@ def traj_end_exit(initial_state, trajectory, using_vio = False):
         # Success is reaching near-zero speed with near-zero position error.
         if using_vio:
             # set larger threshold for VIO due to noisy measurements
-            # can't pass multiple arrays into torch.logical_and()
             cond1 = torch.logical_and(torch.from_numpy(time).to(device) >= min_times, torch.linalg.norm(state['x'] - xf, dim=-1) < 1)
             cond2 = torch.logical_and(torch.linalg.norm(state['v'], dim=-1) <= 1, angle <= 1)
             cond = torch.logical_and(cond1, cond2).cpu().numpy()
@@ -203,17 +188,13 @@ def traj_end_exit(initial_state, trajectory, using_vio = False):
 
 def time_exit(times: np.ndarray, t_finals: np.ndarray):
     """
-    Return exit status if the time exceeds t_final, otherwise None.
+    Return True if the time exceeds t_final, otherwise None.
     """
-    # return np.where(times >= t_finals)
-    # if time >= t_final:
-    #     return ExitStatus.TIMEOUT
-    # return None
     return np.where(times >= t_finals, True, False)
 
 def safety_exit(world, margin, state, flat, control):
     """
-    Return exit status per drone if their safety conditions is violated, otherwise 0.
+    Return True per drone if their safety conditions is violated, otherwise 0.
     """
     status = np.zeros(state['x'].shape[0], dtype=bool)
     status = np.where(np.any(np.abs(state['v'].cpu().numpy()) > 20, axis=-1),
