@@ -1,5 +1,7 @@
 import numpy as np
 import torch
+import resource
+
 import time
 import matplotlib.pyplot as plt
 import copy
@@ -73,25 +75,45 @@ def run_sequential_sim(traj, world, x0, dt):
 # which will change the actual average FPS you obtain with the batched simulation (will probably make it worse).
 
 # Example results on a machine with AMD Ryzen 9 3900X, 32GB RAM, NVidia 2080 Super:
-# seq fps was 593.8719228751526
-# For batch size 2, CPU FPS = 23.773772579654764
-# For batch size 10, CPU FPS = 116.61066056343323
-# For batch size 20, CPU FPS = 229.57299463942917
-# For batch size 50, CPU FPS = 553.3820867384225
-# For batch size 100, CPU FPS = 1093.4404182380724
-# For batch size 1000, CPU FPS = 6039.756926312764
-# For batch size 5000, CPU FPS = 9032.18263126089
-# For batch size 10000, CPU FPS = 9407.794168614675
-# For batch size 20000, CPU FPS = 9713.704835954573
-# For batch size 2, GPU FPS = 11.736757475900584
-# For batch size 10, GPU FPS = 57.04842738612363
-# For batch size 20, GPU FPS = 109.72285410258087
-# For batch size 50, GPU FPS = 280.74316676064575
-# For batch size 100, GPU FPS = 551.4283540610186
-# For batch size 1000, GPU FPS = 5208.497736491586
-# For batch size 5000, GPU FPS = 20707.445553670772
-# For batch size 10000, GPU FPS = 31844.703721550744
-# For batch size 20000, GPU FPS = 39107.1536285256
+# (Measuring GPU VRAM usage is imprecise and was obtained through monitoring nvidia-smi)
+# seq fps was 600.5703604578299
+# Peak memory usage so far = 462.84375 Mb
+# For batch size 2, CPU FPS = 24.122956586907613
+# Peak memory usage so far = 465.140625 Mb
+# For batch size 10, CPU FPS = 125.15730114973458
+# Peak memory usage so far = 468.60546875 Mb
+# For batch size 20, CPU FPS = 246.31885898407677
+# Peak memory usage so far = 476.85546875 Mb
+# For batch size 50, CPU FPS = 583.9553234830923
+# Peak memory usage so far = 492.578125 Mb
+# For batch size 100, CPU FPS = 1160.1165827787581
+# Peak memory usage so far = 744.48046875 Mb
+# For batch size 1000, CPU FPS = 6638.209940893531
+# Peak memory usage so far = 1947.76953125 Mb
+# For batch size 5000, CPU FPS = 9338.591548148928
+# Peak memory usage so far = 3770.22265625 Mb
+# For batch size 10000, CPU FPS = 9622.379744860333
+# Peak memory usage so far = 7002.85546875 Mb
+# For batch size 20000, CPU FPS = 9733.3694836387
+
+# batch size 2 VRAM used: 204 Mb
+# For batch size 2, GPU FPS = 11.774601581262745
+# batch size 10 VRAM used: 204 Mb
+# For batch size 10, GPU FPS = 58.96754820691534
+# batch size 20 VRAM used: 204 Mb
+# For batch size 20, GPU FPS = 118.45858057907071
+# batch size 50 VRAM used: 210 Mb
+# For batch size 50, GPU FPS = 291.9745161760285
+# batch size 100 VRAM used: 216 Mb
+# For batch size 100, GPU FPS = 573.5845244153943
+# batch size 1000 VRAM used: 336 Mb
+# For batch size 1000, GPU FPS = 5490.737933313098
+# batch size 5000 VRAM used: 884 Mb
+# For batch size 5000, GPU FPS = 22342.409595685356
+# batch size 10000 VRAM used: 1490 Mb
+# For batch size 10000, GPU FPS = 31395.2664199141
+# batch size 20000 VRAM used: 2758 Mb
+# For batch size 20000, GPU FPS = 39939.907530636054
 def main():
     # Performance for larger (>5000) batch sizes degrades on CPU when you do this (and don't use multiprocessing),
     # But this step is necessary whenever using batched simulation with CPU multiprocessing.
@@ -115,6 +137,7 @@ def main():
     traj = MinSnap(waypoints, v_avg=v_avg_des, verbose=False)
 
     seq_states, seq_fps = run_sequential_sim(traj, world, x0, sim_dt)
+    print(f"peak memory usage for sequential simulation was {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024}")
     print(f"seq fps was {seq_fps}")
 
     device = torch.device("cpu")
@@ -130,11 +153,13 @@ def main():
 
         start_time = time.time()
         results = simulate_batch(world, initial_states, vehicle, controller, batched_traj, wind_profile, t_fs, sim_dt, 0.25, print_fps=False)
+        print(f"Peak memory usage so far = {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024} mb")
         total_frames = np.sum(results[-1])  # sum the timesteps at which each drone finished.
         done_time = time.time() - start_time
         cpu_fps.append(total_frames/done_time)
         cpu_times.append(done_time)
         print(f"For batch size {batch_size}, CPU FPS = {total_frames/done_time}")
+
 
     # get GPU FPS
     if torch.cuda.is_available():
