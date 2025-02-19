@@ -40,52 +40,6 @@ def batched_worker(trajectory, vehicle, controller, x0):
     return states, flats, controls
 
 
-def test_simulate_fn():
-    print("testing batched simulation function")
-    torch.multiprocessing.set_sharing_strategy('file_system')
-    device = torch.device("cpu")
-    #### Initial Drone States ####
-    num_drones = 5
-    init_rotor_speed = 1788.53
-    x0 = {'x': torch.zeros(num_drones,3).double(),
-          'v': torch.zeros(num_drones, 3).double(),
-          'q': torch.tensor([0, 0, 0, 1]).repeat(num_drones, 1).double(), # [i,j,k,w]
-          'w': torch.zeros(num_drones, 3).double(),
-          'wind': torch.zeros(num_drones, 3).double(),  # Since wind is handled elsewhere, this value is overwritten
-          'rotor_speeds': torch.tensor([init_rotor_speed, init_rotor_speed, init_rotor_speed, init_rotor_speed]).repeat(num_drones, 1).double()}
-
-
-    #### Generate Trajectories ####
-    world = World({"bounds": {"extents": [-10, 10, -10, 10, -10, 10]}, "blocks": []})
-    num_waypoints = 3
-    v_avg_des = 2.0
-    positions = x0['x']
-    trajectories = []
-    ref_traj_gen_start_time = time.time()
-    num_done = 0
-    while num_done < num_drones:
-        waypoints = np.array(sample_waypoints(num_waypoints, world, start_waypoint=positions[num_done].cpu().numpy(),
-                                              min_distance=1.0, max_distance=2.0))
-        try:
-            traj = MinSnap(waypoints, v_avg=v_avg_des, verbose=False)
-            if traj.x_poly is not None and traj.yaw_poly is not None and traj.x_poly.shape==(num_waypoints-1,3,8):
-                trajectories.append(traj)
-                num_done += 1
-        except TypeError:
-            continue
-
-    batched_trajs = BatchedMinSnap(trajectories, device=device)
-    controller = BatchedSE3Control(quad_params, num_drones, device=device)
-    vehicle = BatchedMultirotor(quad_params, num_drones, x0, device=device)
-
-    t_fs = np.array([trajectory.t_keyframes[-1] for trajectory in trajectories])
-    print(f"Time to Generate reference trajectories: {time.time() - ref_traj_gen_start_time}")
-    wind_profile = NoWind(num_drones)
-    t_step = 0.01
-    results = simulate_batch(world, x0, vehicle, controller, batched_trajs, wind_profile, t_fs, 0.01, 0.25)
-    done_times = results[-1]
-    states = results[1]
-
 def main():
     torch.multiprocessing.set_sharing_strategy('file_system')
     torch.set_num_threads(1)
