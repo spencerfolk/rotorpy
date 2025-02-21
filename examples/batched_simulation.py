@@ -4,10 +4,11 @@ import time
 import matplotlib.pyplot as plt
 
 from rotorpy.trajectories.minsnap import MinSnap, BatchedMinSnap
-from rotorpy.vehicles.batched_multirotor import BatchedMultirotor
+from rotorpy.vehicles.batched_multirotor import BatchedMultirotor, BatchedDynamicsParams
 from rotorpy.vehicles.multirotor import Multirotor
 from rotorpy.controllers.quadrotor_control import BatchedSE3Control, SE3Control
-from rotorpy.vehicles.crazyflie_params import quad_params
+from rotorpy.vehicles.crazyflie_params import quad_params as cf_quad_params
+from rotorpy.vehicles.hummingbird_params import quad_params as hb_quad_params
 from rotorpy.utils.trajgen_utils import generate_random_minsnap_traj
 from rotorpy.world import World
 from rotorpy.wind.default_winds import NoWind
@@ -48,7 +49,7 @@ def main():
     #### Generate Trajectories ####
     world = World({"bounds": {"extents": [-10, 10, -10, 10, -10, 10]}, "blocks": []})
     num_waypoints = 4
-    v_avg_des = 1.0
+    v_avg_des = 3.0
 
     # when interfacing with some of the standard rotorpy hardware, you'll have to convert from torch -> numpy.
     positions = x0['x'].cpu().numpy()
@@ -66,7 +67,11 @@ def main():
             num_done += 1
 
     # Set to 0 if you want sim results to be more deterministic (default value is 100)
-    quad_params["motor_noise_std"] = 0
+    cf_quad_params["motor_noise_std"] = 0
+    hb_quad_params["motor_noise_std"] = 0
+
+    # We'll simulate half crazyflies, half hummingbirds
+    all_quad_params = [cf_quad_params]*(num_drones//2) + [hb_quad_params]*(num_drones//2)
 
     # Optional: specify feedback gains for each drone in the batch. (can be different for each drone)
     kp_pos = torch.tensor([6.5, 6.5, 15]).repeat(num_drones, 1).double()
@@ -79,9 +84,14 @@ def main():
     batched_trajs = BatchedMinSnap(trajectories, device=device)
     print(f"Time to Generate reference trajectories: {time.time() - ref_traj_gen_start_time}")
 
+    # Define this object which contains dynamics params for each of the drones.
+    # If the batch size is large, this can save memory by sharing the dynamics params across the controller and
+    # multirotor object.
+    batch_params = BatchedDynamicsParams(all_quad_params, num_drones, device)
+
     # Define a batched controller object which lets us compute control inputs for all drones in the batch at the
     # same time. Note that currently, all drones in the batch must share the same quad_params.
-    controller = BatchedSE3Control(quad_params, num_drones, device=device,
+    controller = BatchedSE3Control(batch_params, num_drones, device=device,
                                    kp_pos=kp_pos,
                                    kd_pos=kd_pos,
                                    kp_att=kp_att,
@@ -90,8 +100,7 @@ def main():
     # Define a batched multirotor, which simulates all drones in the batch simultaneously.
     # Choose 'dopri5' to mimic scipy's default solve_ivp behavior with an adaptive step size, or 'rk4'
     # for a fixed step-size integrator, which is lower-fidelity but much faster.
-    vehicle = BatchedMultirotor([quad_params]*num_drones, num_drones, x0, device=device, integrator='dopri5')
-    # vehicle = BatchedMultirotor(quad_params, num_drones, x0, device=device, integrator='rk4')
+    vehicle = BatchedMultirotor(batch_params, num_drones, x0, device=device, integrator='dopri5')
 
     dt = 0.01
 
@@ -126,8 +135,6 @@ def main():
                  'w': np.zeros(3, ),
                  'wind': np.array([0, 0, 0]),  # Since wind is handled elsewhere, this value is overwritten
                  'rotor_speeds': np.array([1788.53, 1788.53, 1788.53, 1788.53])}
-    controller_single = SE3Control(quad_params)
-    vehicle_single = Multirotor(quad_params, initial_state=x0_single)
 
     all_seq_states = []
     mocap_params = {'pos_noise_density': 0.0005*np.ones((3,)),  # noise density for position
@@ -145,6 +152,8 @@ def main():
     total_time = 0
     total_frames = 0
     for d in range(num_drones):
+        controller_single = SE3Control(all_quad_params[d])
+        vehicle_single = Multirotor(all_quad_params[d], initial_state=x0_single)
         start_time = time.time()
         single_result = simulate(world, x0_single, vehicle_single, controller_single, trajectories[d],
                                  NoWind(), Imu(sampling_rate=int(1/dt)), mocap, NullEstimator(),

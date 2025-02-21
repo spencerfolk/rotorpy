@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import copy
 
 from rotorpy.trajectories.minsnap import MinSnap, BatchedMinSnap
-from rotorpy.vehicles.batched_multirotor import BatchedMultirotor
+from rotorpy.vehicles.batched_multirotor import BatchedMultirotor, BatchedDynamicsParams
 from rotorpy.vehicles.multirotor import Multirotor
 from rotorpy.controllers.quadrotor_control import BatchedSE3Control, SE3Control
 from rotorpy.vehicles.crazyflie_params import quad_params
@@ -150,10 +150,12 @@ def main():
     integrator = 'dopri5'   # 'rk4' for fixed step size (faster)
     # Get CPU FPS
     for batch_size in batch_sizes:
+        all_quad_params = [quad_params] * batch_size
+        batch_params = BatchedDynamicsParams(all_quad_params, batch_size, device)
         trajectories = [copy.deepcopy(traj) for _ in range(batch_size)]  # keep trajectory constant to eliminate one variable
         initial_states = get_batch_initial_states(batch_size, device)
-        controller = BatchedSE3Control(quad_params, batch_size, device=device)
-        vehicle = BatchedMultirotor(quad_params, batch_size, initial_states, device=device, integrator=integrator)
+        controller = BatchedSE3Control(batch_params, batch_size, device=device)
+        vehicle = BatchedMultirotor(batch_params, batch_size, initial_states, device=device, integrator=integrator)
         t_fs = np.array([trajectory.t_keyframes[-1] for trajectory in trajectories])
         batched_traj = BatchedMinSnap(trajectories, device=device)
         wind_profile = NoWind(batch_size)
@@ -173,10 +175,12 @@ def main():
     if torch.cuda.is_available():
         device = torch.device("cuda:0")
         for batch_size in batch_sizes:
+            all_quad_params = [quad_params] * batch_size
+            batch_params = BatchedDynamicsParams(all_quad_params, batch_size, device)
             trajectories = [copy.deepcopy(traj) for _ in range(batch_size)]  # keep trajectory constant to eliminate one variable
             initial_states = get_batch_initial_states(batch_size, device)
-            controller = BatchedSE3Control(quad_params, batch_size, device=device)
-            vehicle = BatchedMultirotor(quad_params, batch_size, initial_states, device=device, integrator=integrator)
+            controller = BatchedSE3Control(batch_params, batch_size, device=device)
+            vehicle = BatchedMultirotor(batch_params, batch_size, initial_states, device=device, integrator=integrator)
             t_fs = np.array([trajectory.t_keyframes[-1] for trajectory in trajectories])
             batched_traj = BatchedMinSnap(trajectories, device=device)
             wind_profile = NoWind(batch_size)

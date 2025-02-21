@@ -2,10 +2,11 @@ import numpy as np
 import torch
 
 from rotorpy.trajectories.minsnap import BatchedMinSnap
-from rotorpy.vehicles.batched_multirotor import BatchedMultirotor
+from rotorpy.vehicles.batched_multirotor import BatchedMultirotor, BatchedDynamicsParams
 from rotorpy.vehicles.multirotor import Multirotor
 from rotorpy.controllers.quadrotor_control import BatchedSE3Control, SE3Control
-from rotorpy.vehicles.crazyflie_params import quad_params
+from rotorpy.vehicles.crazyflie_params import quad_params as cf_quad_params
+from rotorpy.vehicles.hummingbird_params import quad_params as hb_quad_params
 from rotorpy.utils.trajgen_utils import generate_random_minsnap_traj
 from rotorpy.world import World
 
@@ -13,7 +14,13 @@ def test_batched_operators():
     num_drones = 10
     device = torch.device("cpu")
     init_rotor_speed = 1788.53
-    quad_params['motor_noise_std'] = 0
+    # Set to 0 if you want sim results to be more deterministic (default value is 100)
+    cf_quad_params["motor_noise_std"] = 0
+    hb_quad_params["motor_noise_std"] = 0
+
+    # We'll simulate half crazyflies, half hummingbirds
+    all_quad_params = [cf_quad_params]*(num_drones//2) + [hb_quad_params]*(num_drones//2)
+
     world = World({"bounds": {"extents": [-10, 10, -10, 10, -10, 10]}, "blocks": []})
     batch_state = {'x': torch.randn(num_drones,3, device=device).double(),
                   'v': torch.randn(num_drones, 3, device=device).double(),
@@ -32,18 +39,19 @@ def test_batched_operators():
         for key in batch_flat_output.keys():
             assert np.all(np.abs(batch_flat_output[key][j].cpu().numpy() - seq_flat_output[key]) < 1e-3)
 
-    batched_ctrlr = BatchedSE3Control(quad_params, num_drones, device)
-    single_ctrlr = SE3Control(quad_params)
+    batch_params = BatchedDynamicsParams(all_quad_params, num_drones, device)
+    batched_ctrlr = BatchedSE3Control(batch_params, num_drones, device)
     batch_control_inputs = batched_ctrlr.update(0, batch_state, batch_flat_output)
 
-    batched_multirotor = BatchedMultirotor(quad_params, num_drones, batch_state, device)
-    single_multirotor = Multirotor(quad_params)
+    batched_multirotor = BatchedMultirotor(batch_params, num_drones, batch_state, device)
 
     batch_next_state = batched_multirotor.step(batch_state, batch_control_inputs, 0.01)
 
     # Make sure that BatchedSE3Control does the same thing as SE3Control
     # Make sure that BatchedMultirotor does the same thing as MultiRotor
     for j in range(num_drones):
+        single_ctrlr = SE3Control(all_quad_params[j])
+        single_multirotor = Multirotor(all_quad_params[j])
         seq_state = {key: batch_state[key][j].cpu().numpy() for key in batch_state.keys()}
         flat_output = {key: batch_flat_output[key][j].cpu().numpy() for key in batch_flat_output.keys()}
         seq_control_input = single_ctrlr.update(0, seq_state, flat_output)
