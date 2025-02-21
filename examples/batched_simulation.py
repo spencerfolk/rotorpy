@@ -30,7 +30,7 @@ def main():
 
     # How many drones to simulate in parallel. Up to a limit, increasing this value increases the efficiency (average FPS)
     # of the simulation. How many you can simulate in parallel efficiently will depend on your machine.
-    num_drones = 100
+    num_drones = 50
 
     #### Initial Drone States ####
     # We create initial states for each drone in the batch.
@@ -48,7 +48,7 @@ def main():
     #### Generate Trajectories ####
     world = World({"bounds": {"extents": [-10, 10, -10, 10, -10, 10]}, "blocks": []})
     num_waypoints = 4
-    v_avg_des = 3.0
+    v_avg_des = 1.0
 
     # when interfacing with some of the standard rotorpy hardware, you'll have to convert from torch -> numpy.
     positions = x0['x'].cpu().numpy()
@@ -90,7 +90,7 @@ def main():
     # Define a batched multirotor, which simulates all drones in the batch simultaneously.
     # Choose 'dopri5' to mimic scipy's default solve_ivp behavior with an adaptive step size, or 'rk4'
     # for a fixed step-size integrator, which is lower-fidelity but much faster.
-    vehicle = BatchedMultirotor(quad_params, num_drones, x0, device=device, integrator='dopri5')
+    vehicle = BatchedMultirotor([quad_params]*num_drones, num_drones, x0, device=device, integrator='dopri5')
     # vehicle = BatchedMultirotor(quad_params, num_drones, x0, device=device, integrator='rk4')
 
     dt = 0.01
