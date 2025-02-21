@@ -30,7 +30,7 @@ def main():
 
     # How many drones to simulate in parallel. Up to a limit, increasing this value increases the efficiency (average FPS)
     # of the simulation. How many you can simulate in parallel efficiently will depend on your machine.
-    num_drones = 50
+    num_drones = 100
 
     #### Initial Drone States ####
     # We create initial states for each drone in the batch.
@@ -65,8 +65,8 @@ def main():
             trajectories.append(traj)
             num_done += 1
 
-    # Set to 0 if you want sim results to be more deterministic
-    quad_params["motor_noise_std"] = 50
+    # Set to 0 if you want sim results to be more deterministic (default value is 100)
+    quad_params["motor_noise_std"] = 0
 
     # Optional: specify feedback gains for each drone in the batch. (can be different for each drone)
     kp_pos = torch.tensor([6.5, 6.5, 15]).repeat(num_drones, 1).double()
@@ -161,27 +161,33 @@ def main():
     num_to_plot = 3
     fig, ax = plt.subplots(num_to_plot, 3)
     which_sim = np.random.choice(num_drones, num_to_plot, replace=False)
-    dims = ["x", "y", "z"]
+    dims = ["x (m)", "y (m)", "z (m)"]
     for j, sim_idx in enumerate(which_sim):
+        ts = np.arange(trajectories[sim_idx].t_keyframes[-1]+dt, step=dt)
+        print(
+            f"All values of state after tstep {simulate_fn_done_times[sim_idx]} for drone {sim_idx} are NaN: {np.all(np.isnan(simulate_fn_states['x'][simulate_fn_done_times[sim_idx]:, int(sim_idx)]))}")
         for dimension in range(3):
-            ax[j][dimension].plot([trajectories[sim_idx].update(t)['x'][dimension] for t in np.arange(trajectories[sim_idx].t_keyframes[-1], step=dt)], label='reference')
-            ax[j][dimension].plot(all_seq_states[int(sim_idx)]['x'][:,dimension], label='sequential')
+            ax[j][dimension].plot(ts, [trajectories[sim_idx].update(t)['x'][dimension] for t in ts], label='reference')
+            ax[j][dimension].plot(ts, all_seq_states[int(sim_idx)]['x'][:,dimension], label='sequential')
             # Note that we are using ":simulate_fn_done_times[sim_idx]" to get only the states for this drone.
-            # for timesteps > simulate_fn_done_times[sim_idx], the states will be zero for this drone.
-            ax[j][dimension].plot(simulate_fn_states['x'][:simulate_fn_done_times[sim_idx], int(sim_idx), dimension], label='batched')
+            # for timesteps > simulate_fn_done_times[sim_idx], the states will be nan for this drone.
+            ax[j][dimension].plot(ts, simulate_fn_states['x'][:simulate_fn_done_times[sim_idx], int(sim_idx), dimension], label='batched')
             ax[j][dimension].legend()
             ax[j][dimension].set_ylabel(dims[dimension])
+            ax[j][dimension].set_xlabel("Time (s)")
     fig.tight_layout()
 
     # Plot Body Rates
     fig2, ax2 = plt.subplots(num_to_plot, 3)
     dims = ["w_x", "w_y", "w_z"]
     for j, sim_idx in enumerate(which_sim):
+        ts = np.arange(trajectories[sim_idx].t_keyframes[-1]+dt, step=dt)
         for dimension in range(3):
-            ax2[j][dimension].plot(all_seq_states[int(sim_idx)]['w'][:,dimension], label='sequential')
-            ax2[j][dimension].plot(simulate_fn_states['w'][:simulate_fn_done_times[sim_idx], int(sim_idx), dimension], label='batched')
+            ax2[j][dimension].plot(ts, all_seq_states[int(sim_idx)]['w'][:,dimension], label='sequential')
+            ax2[j][dimension].plot(ts, simulate_fn_states['w'][:simulate_fn_done_times[sim_idx], int(sim_idx), dimension], label='batched')
             ax2[j][dimension].legend()
             ax2[j][dimension].set_ylabel(dims[dimension])
+            ax[j][dimension].set_xlabel("Time (s)")
     fig.tight_layout()
     plt.show()
 

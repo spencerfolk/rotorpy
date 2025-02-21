@@ -119,7 +119,7 @@ def simulate_batch(world,
         done = np.logical_or(done, ne)
         done = np.logical_or(done, te)
         done_this_iter = np.logical_xor(prev_status, done)
-        exit_timesteps[done_this_iter] = step
+        exit_timesteps[done_this_iter] = step+1
         if np.all(done):
             break
         running_idxs = np.nonzero(np.logical_not(done))[0]
@@ -141,7 +141,6 @@ def simulate_batch(world,
     state   = merge_dicts(state)
     control         = merge_dicts(control)
     flat            = merge_dicts(flat)
-
     return (time_array, state, control, flat, exit_status, exit_timesteps)
 
 

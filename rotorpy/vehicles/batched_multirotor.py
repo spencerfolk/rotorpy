@@ -216,9 +216,9 @@ class BatchedMultirotor(object):
         state['q'][idxs] = state['q'][idxs] / torch.norm(state['q'][idxs], dim=-1).unsqueeze(-1)
 
         # Add noise to the motor speed measurement
-        state['rotor_speeds'] += torch.normal(mean=torch.zeros(self.num_rotors, device=self.device),
-                                              std=torch.ones(self.num_rotors, device=self.device) * np.abs(self.motor_noise))
-        state['rotor_speeds'] = torch.clip(state['rotor_speeds'], self.rotor_speed_min, self.rotor_speed_max)
+        state['rotor_speeds'][idxs] += torch.normal(mean=torch.zeros(self.num_rotors, device=self.device),
+                                              std=torch.ones(len(idxs), self.num_rotors, device=self.device) * np.abs(self.motor_noise))
+        state['rotor_speeds'][idxs] = torch.clip(state['rotor_speeds'][idxs], self.rotor_speed_min, self.rotor_speed_max)
 
         return state
 
@@ -285,7 +285,7 @@ class BatchedMultirotor(object):
         Computes the wrench acting on the rigid body based on the rotor speeds for thrust and airspeed 
         for aerodynamic forces. 
         The airspeed is represented in the body frame.
-        The net force Ftot is represented in the body frame. 
+        The net force Ftot is represented in the body frame.
         The net moment Mtot is represented in the body frame. 
         """
         assert(body_rates.shape[0] == rotor_speeds.shape[0])
@@ -411,12 +411,19 @@ class BatchedMultirotor(object):
         """
         device = s.device
         # fill state with zeros, then replace with appropriate indexes.
-        state = {'x': torch.zeros(num_drones, 3, device=device).double(),
-                 'v': torch.zeros(num_drones, 3, device=device).double(),
-                 'q': torch.zeros(num_drones, 4, device=device).double(),
-                 'w': torch.zeros(num_drones, 3, device=device).double(),
-                 'wind': torch.zeros(num_drones, 3, device=device).double(),
-                 'rotor_speeds': torch.zeros(num_drones, 4, device=device).double()}
+        # state = {'x': torch.zeros(num_drones, 3, device=device).double(),
+        #          'v': torch.zeros(num_drones, 3, device=device).double(),
+        #          'q': torch.zeros(num_drones, 4, device=device).double(),
+        #          'w': torch.zeros(num_drones, 3, device=device).double(),
+        #          'wind': torch.zeros(num_drones, 3, device=device).double(),
+        #          'rotor_speeds': torch.zeros(num_drones, 4, device=device).double()}
+
+        state = {'x': torch.full((num_drones, 3), float("nan"), device=device).double(),
+                 'v': torch.full((num_drones, 3), float("nan"), device=device).double(),
+                 'q': torch.full((num_drones, 4), float("nan"), device=device).double(),
+                 'w': torch.full((num_drones, 3), float("nan"), device=device).double(),
+                 'wind': torch.full((num_drones, 3), float("nan"), device=device).double(),
+                 'rotor_speeds': torch.full((num_drones, 4), float("nan"), device=device).double()}
         state['q'][...,-1] = 1  # make sure we're returning a valid quaternion
         state['x'][idxs] = s[:,0:3]
         state['v'][idxs] = s[:,3:6]
