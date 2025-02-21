@@ -49,6 +49,8 @@ The output of the simulator is a dictionary containing a time vector and the tim
 Below is a minimum working example: 
 
 ```
+import numpy as np
+from rotorpy.environments import Environment
 from rotorpy.vehicles.multirotor import Multirotor
 from rotorpy.vehicles.crazyflie_params import quad_params
 from rotorpy.controllers.quadrotor_control import SE3Control
