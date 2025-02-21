@@ -28,7 +28,6 @@ dependencies = [
     'pandas',
     'tqdm',
     'gymnasium',
-    'ArduPilotPlugin @ git+https://github.com/TomerTip/PyArduPilotPlugin.git',  # Only for ardupilot sitl
     'timed_count' # Only for ardupilot sitl example
 ]
 

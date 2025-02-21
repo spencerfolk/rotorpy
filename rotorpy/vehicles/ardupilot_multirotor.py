@@ -11,7 +11,10 @@ from rotorpy.sensors.imu import Imu
 from rotorpy.vehicles.hummingbird_params import quad_params as crazyflie_params
 from scipy.spatial.transform import Rotation as R
 
-from ArduPilotPlugin import ArduPilotPlugin
+try:
+    from ArduPilotPlugin import ArduPilotPlugin
+except:
+    print("Missing dependency ArduPilotPlugin. Install it from source at https://github.com/TomerTip/PyArduPilotPlugin")
 
 PWM_MIN = 1100
 PWM_MAX = 1900
