@@ -147,10 +147,11 @@ def main():
     print(f"seq fps was {seq_fps}")
 
     device = torch.device("cpu")
-    integrator = 'dopri5'   # 'rk4' for fixed step size (faster)
+    # integrator = 'dopri5'   # 'rk4' for fixed step size (faster)
+    integrator = "rk4"
     # Get CPU FPS
     for batch_size in batch_sizes:
-        all_quad_params = [quad_params] * batch_size
+        all_quad_params = [dict(quad_params) for _ in range(batch_size)]
         batch_params = BatchedDynamicsParams(all_quad_params, batch_size, device)
         trajectories = [copy.deepcopy(traj) for _ in range(batch_size)]  # keep trajectory constant to eliminate one variable
         initial_states = get_batch_initial_states(batch_size, device)
@@ -175,7 +176,7 @@ def main():
     if torch.cuda.is_available():
         device = torch.device("cuda:0")
         for batch_size in batch_sizes:
-            all_quad_params = [quad_params] * batch_size
+            all_quad_params = [dict(quad_params) for _ in range(batch_size)]
             batch_params = BatchedDynamicsParams(all_quad_params, batch_size, device)
             trajectories = [copy.deepcopy(traj) for _ in range(batch_size)]  # keep trajectory constant to eliminate one variable
             initial_states = get_batch_initial_states(batch_size, device)
