@@ -45,6 +45,10 @@ testing = [
 filter = [
     'filterpy == 1.4.5',
 ]
+ardupilot = [
+    'ArduPilotPlugin @ git+https://github.com/TomerTip/PyArduPilotPlugin.git',
+    'timed_count' # Only for example
+]
 
 [project.urls]
 "Homepage" = "https://github.com/spencerfolk/rotorpy"
