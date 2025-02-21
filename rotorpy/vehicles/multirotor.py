@@ -172,7 +172,7 @@ class Multirotor(object):
         return state_dot 
 
 
-    def step(self, state, control, t_step, debug=False):
+    def step(self, state, control, t_step):
         """
         Integrate dynamics forward from state given constant control for time t_step.
         """
@@ -181,19 +181,15 @@ class Multirotor(object):
 
         # The true motor speeds can not fall below min and max speeds.
         cmd_rotor_speeds = np.clip(cmd_rotor_speeds, self.rotor_speed_min, self.rotor_speed_max)
-        if debug:
-            print(f"multirotor step: cmd_rotor_speeds: {cmd_rotor_speeds}")
 
         # Form autonomous ODE for constant inputs and integrate one time step.
         def s_dot_fn(t, s):
-            return self._s_dot_fn(t, s, cmd_rotor_speeds, debug)
+            return self._s_dot_fn(t, s, cmd_rotor_speeds)
         s = Multirotor._pack_state(state)
 
         # Option 1 - RK45 integration
         sol = scipy.integrate.solve_ivp(s_dot_fn, (0, t_step), s, first_step=t_step)
         s = sol['y'][:,-1]
-        if debug:
-            print(f"multirotor step: state: {s}")
         # Option 2 - Euler integration
         # s = s + s_dot_fn(0, s) * t_step  # first argument doesn't matter. It's time invariant model
 
@@ -208,7 +204,7 @@ class Multirotor(object):
 
         return state
 
-    def _s_dot_fn(self, t, s, cmd_rotor_speeds, debug=False):
+    def _s_dot_fn(self, t, s, cmd_rotor_speeds):
         """
         Compute derivative of state for quadrotor given fixed control inputs as
         an autonomous ODE.
@@ -217,19 +213,13 @@ class Multirotor(object):
         state = Multirotor._unpack_state(s)
 
         rotor_speeds = state['rotor_speeds']
-        if debug:
-            print(f"multirotor rotor speeds: {rotor_speeds}")
         inertial_velocity = state['v']
         wind_velocity = state['wind']
 
         R = Rotation.from_quat(state['q']).as_matrix()
-        if debug:
-            print(f"multirotor s_dot_fn: R: {R}")
 
         # Rotor speed derivative
         rotor_accel = (1/self.tau_m)*(cmd_rotor_speeds - rotor_speeds)
-        if debug:
-            print(f"multirotor s_dot_fn: rotor_accel: {rotor_accel}")
 
         # Position derivative.
         x_dot = state['v']
@@ -239,12 +229,9 @@ class Multirotor(object):
 
         # Compute airspeed vector in the body frame
         body_airspeed_vector = R.T@(inertial_velocity - wind_velocity)
-        if debug:
-            print(f"multirotor s_dot_fn: q_dot: {q_dot}")
-            print(f"multirotor s_dot_fn: body_airspeed_vector: {body_airspeed_vector}")
 
         # Compute total wrench in the body frame based on the current rotor speeds and their location w.r.t. CoM
-        (FtotB, MtotB) = self.compute_body_wrench(state['w'], rotor_speeds, body_airspeed_vector, debug)
+        (FtotB, MtotB) = self.compute_body_wrench(state['w'], rotor_speeds, body_airspeed_vector)
 
         # Rotate the force from the body frame to the inertial frame
         Ftot = R@FtotB
@@ -256,10 +243,6 @@ class Multirotor(object):
         w = state['w']
         w_hat = Multirotor.hat_map(w)
         w_dot = self.inv_inertia @ (MtotB - w_hat @ (self.inertia @ w))
-        if debug:
-            print(f"multirotor FtotB: {FtotB}")
-            print(f"multirotor w_dot: {w_dot}")
-            print(f"multirotor v_dot: {v_dot}")
 
         # NOTE: the wind dynamics are currently handled in the wind_profile object. 
         # The line below doesn't do anything, as the wind state is assigned elsewhere. 
@@ -276,7 +259,7 @@ class Multirotor(object):
 
         return s_dot
 
-    def compute_body_wrench(self, body_rates, rotor_speeds, body_airspeed_vector, debug=False):
+    def compute_body_wrench(self, body_rates, rotor_speeds, body_airspeed_vector):
         """
         Computes the wrench acting on the rigid body based on the rotor speeds for thrust and airspeed 
         for aerodynamic forces. 
@@ -299,10 +282,7 @@ class Multirotor(object):
             H = -rotor_speeds*(self.rotor_drag_matrix@local_airspeeds)
 
             # Pitching flapping moment acting at each propeller hub.
-            tmp = (Multirotor.hat_map(local_airspeeds.T).transpose(2, 0, 1))@np.array([0,0,1])
-            tmp = tmp.T
-            M_flap = -self.k_flap*rotor_speeds*tmp
-            # M_flap = -self.k_flap*rotor_speeds*((Multirotor.hat_map(local_airspeeds.T).transpose(2, 0, 1))@np.array([0,0,1])).T
+            M_flap = -self.k_flap*rotor_speeds*((Multirotor.hat_map(local_airspeeds.T).transpose(2, 0, 1))@np.array([0,0,1])).T
         else:
             D = np.zeros(3,)
             H = np.zeros((3,self.num_rotors))
@@ -311,15 +291,6 @@ class Multirotor(object):
         # Compute the moments due to the rotor thrusts, rotor drag (if applicable), and rotor drag torques
         M_force = -np.einsum('ijk, ik->j', Multirotor.hat_map(self.rotor_geometry), T+H)
         M_yaw = self.rotor_dir*(np.array([0, 0, self.k_m])[:, np.newaxis]*rotor_speeds**2)
-
-        if debug:
-            print(f"multirotor compute_body_wrench: local_airspeeds: {local_airspeeds}")
-            print(f"multirotor compute_body_wrench: T: {T}")
-            print(f"multirotor compute_body_wrench: D: {D}")
-            print(f"multirotor compute_body_wrench: H: {H}")
-            print(f"multirotor compute_body_wrench: M_flap: {M_flap}")
-            print(f"multirotor compute_body_wrench: M_force: {M_force}")
-            print(f"multirotor compute_body_wrench: M_yaw: {M_yaw}")
 
         # Sum all elements to compute the total body wrench
         FtotB = np.sum(T + H, axis=1) + D

@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import resource
+import warnings
 
 import time
 import matplotlib.pyplot as plt
@@ -141,6 +142,7 @@ def main():
     seq_states, seq_fps = run_sequential_sim(traj, world, x0, sim_dt)
     seq_ram_usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024
     cpu_ram_usage.append(seq_ram_usage)
+    warnings.warn("On MacOS, since system memory usage is reported differently, the reported RAM usage will be 1000x higher than actual.")
     print(f"peak memory usage for sequential simulation was {seq_ram_usage}")
     print(f"seq fps was {seq_fps}")
 

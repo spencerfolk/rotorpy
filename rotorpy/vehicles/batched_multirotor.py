@@ -185,7 +185,7 @@ class BatchedMultirotor(object):
         return state_dot 
 
 
-    def step(self, state, control, t_step, idxs=None, debug=False):
+    def step(self, state, control, t_step, idxs=None):
         """
         Integrate dynamics forward from state given constant control for time t_step.
         idxs: integer array of shape (num_running_drones, )
@@ -199,7 +199,7 @@ class BatchedMultirotor(object):
 
         # Form autonomous ODE for constant inputs and integrate one time step.
         def s_dot_fn(t, s):
-            return self._s_dot_fn(t, s, cmd_rotor_speeds, idxs, debug)
+            return self._s_dot_fn(t, s, cmd_rotor_speeds, idxs)
         s = BatchedMultirotor._pack_state(state, self.num_drones, self.device)
 
         # Option 1 - RK45 integration
@@ -222,7 +222,7 @@ class BatchedMultirotor(object):
 
         return state
 
-    def _s_dot_fn(self, t, s, cmd_rotor_speeds, idxs, debug=False):
+    def _s_dot_fn(self, t, s, cmd_rotor_speeds, idxs):
         """
         Compute derivative of state for quadrotor given fixed control inputs as
         an autonomous ODE.
@@ -232,8 +232,6 @@ class BatchedMultirotor(object):
         state = BatchedMultirotor._unpack_state(s, idxs, self.num_drones)
 
         rotor_speeds = state['rotor_speeds'][idxs]
-        if debug:
-            print(f"batched multirotor rotor speeds: {rotor_speeds}")
         inertial_velocity = state['v'][idxs]
         wind_velocity = state['wind'][idxs]
 
@@ -242,8 +240,6 @@ class BatchedMultirotor(object):
 
         # Rotor speed derivative
         rotor_accel = (1/self.tau_m)*(cmd_rotor_speeds[idxs] - rotor_speeds)
-        if debug:
-            print(f"multirotor s_dot_fn: rotor_accel: {rotor_accel}")
 
         # Position derivative.
         x_dot = state['v'][idxs]
@@ -253,11 +249,7 @@ class BatchedMultirotor(object):
 
         # Compute airspeed vector in the body frame
         body_airspeed_vector = R.transpose(1, 2)@(inertial_velocity - wind_velocity).unsqueeze(-1).double()
-
         body_airspeed_vector = body_airspeed_vector.squeeze(-1)
-        if debug:
-            print(f"multirotor s_dot_fn: q_dot: {q_dot}")
-            print(f"multirotor s_dot_fn: body_airspeed_vector: {body_airspeed_vector}")  # CORRECT
 
         # Compute total wrench in the body frame based on the current rotor speeds and their location w.r.t. CoM
         (FtotB, MtotB) = self.compute_body_wrench(state['w'][idxs], rotor_speeds, body_airspeed_vector)
@@ -272,10 +264,6 @@ class BatchedMultirotor(object):
         w = state['w'][idxs].double()
         w_hat = BatchedMultirotor.hat_map(w).permute(2, 0, 1)
         w_dot = self.inv_inertia @ (MtotB - (w_hat.double() @ (self.inertia @ w.unsqueeze(-1))).squeeze(-1)).unsqueeze(-1)
-        if debug:
-            print(f"batched multirotor FtotB: {FtotB}") # CORRECT
-            print(f"batched multirotor w_dot: {w_dot}") # CORRECT
-            print(f"batched multirotor v_dot: {v_dot}") # CORRECT
 
         # NOTE: the wind dynamics are currently handled in the wind_profile object. 
         # The line below doesn't do anything, as the wind state is assigned elsewhere. 
@@ -292,7 +280,7 @@ class BatchedMultirotor(object):
 
         return s_dot
 
-    def compute_body_wrench(self, body_rates, rotor_speeds, body_airspeed_vector, debug=False):
+    def compute_body_wrench(self, body_rates, rotor_speeds, body_airspeed_vector):
         """
         Computes the wrench acting on the rigid body based on the rotor speeds for thrust and airspeed 
         for aerodynamic forces. 
@@ -334,15 +322,6 @@ class BatchedMultirotor(object):
         M_force = -torch.einsum('bijk, bik->bj', BatchedMultirotor.hat_map(self.rotor_geometry.squeeze()).unsqueeze(0).double(), T+H)
         M_yaw = torch.zeros(num_drones, 3, 4, device=self.device)
         M_yaw[...,-1,:] = self.rotor_dir * self.k_m * rotor_speeds**2
-
-        if debug:
-            print(f"batched multirotor compute_body_wrench: local_airspeeds: {local_airspeeds}")  # CORRECT
-            print(f"batched multirotor compute_body_wrench: T: {T}")  # CORRECT
-            print(f"batched multirotor compute_body_wrench: D: {D}")  # CORRECT
-            print(f"batched multirotor compute_body_wrench: H: {H}")  # CORRCT
-            print(f"batched multirotor compute_body_wrench: M_flap: {M_flap}")
-            print(f"batched multirotor compute_body_wrench: M_force: {M_force}")  # CORRECT
-            print(f"batched multirotor compute_body_wrench: M_yaw: {M_yaw}")  # CORRECT
 
         # Sum all elements to compute the total body wrench
         FtotB = torch.sum(T + H, dim=2) + D

@@ -25,7 +25,7 @@ def simulate_batch(world,
     """
     Simultaneously performs many vehicle simulations and returns the numerical results.
     Note that, currently, compared to the normal simulate() function, simulate_batch() does not support
-    IMU measurements, mocap, or the state estimator.
+    IMU measurements, mocap, or the state estimator. See examples/batched_simulation.py for usage.
 
     Inputs:
         world, a class representing the world it is flying in, including objects and world bounds. 
@@ -55,6 +55,7 @@ def simulate_batch(world,
             w, angular velocity, rad/s, shape=(N,B,3)
             rotor_speeds, motor speeds, rad/s, shape=(N,B,n) where n is the number of rotors
             wind, wind velocity, m/s, shape=(N,B,3)
+
         control, a dict describing the command input history with keys
             cmd_motor_speeds, motor speeds, rad/s, shape=(N,B,4)
             cmd_q, commanded orientation (not used by simulator), quaternion [i,j,k,w], shape=(N,B,4)
@@ -68,7 +69,9 @@ def simulate_batch(world,
             yaw,      yaw angle, rad
             yaw_dot,  yaw rate, rad/s
         exit_status, an array of ExitStatus enums indicating the reason for termination for each drone.
-        exit_timesteps, an array indicating at which timestep (not time!) each vehicle in the batch completed its sim, shape = (B)
+        exit_timesteps, an array indicating at which timestep each vehicle in the batch terminated, shape = (B).
+            For efficiency, if drone i terminates at timestep n < N, the outputs in 'state', 'control', and 'flat' 
+            for that drone for all subsequent timesteps will be zero. 'exit_timesteps' contains the value n for each drone in the batch.
     """
 
     assert(torch.is_tensor(initial_states[k]) for k in initial_states.keys())
