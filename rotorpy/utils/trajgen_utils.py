@@ -1,5 +1,6 @@
 import numpy as np
 from rotorpy.utils.occupancy_map import OccupancyMap
+from rotorpy.trajectories.minsnap import MinSnap
 
 def sample_waypoints(num_waypoints, world, world_buffer=2, check_collision=False, min_distance=1, max_distance=3, max_attempts=1000, start_waypoint=None, end_waypoint=None):
     """
@@ -207,3 +208,27 @@ def sample_trajectory(traj_obj, t_arr):
         yaw_ddot[i] = flat['yaw_ddot']
 
     return position, velocity, acceleration, jerk, snap, yaw, yaw_dot, yaw_ddot
+
+
+def generate_random_minsnap_traj(world,
+                                 num_waypoints,
+                                 v_avg_des,
+                                 min_distance,
+                                 max_distance,
+                                 start_position,
+                                 max_trials=100,
+                                 seed=None):
+    if seed is not None:
+        np.random.seed(seed)
+    trial = 0
+    while trial < max_trials:
+        waypoints = np.array(sample_waypoints(num_waypoints, world, start_waypoint=start_position,
+                                              min_distance=min_distance, max_distance=max_distance))
+        try:
+            traj = MinSnap(waypoints, v_avg=v_avg_des, verbose=False)
+            if traj.x_poly is not None and traj.yaw_poly is not None and traj.x_poly.shape==(num_waypoints-1,3,8):
+                return traj
+        except TypeError:
+            trial += 1
+    print("Could not generate trajectory! Try decreasing velocity or increasing spacing between waypoints")
+    return None

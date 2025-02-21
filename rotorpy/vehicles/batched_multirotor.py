@@ -1,11 +1,6 @@
 import numpy as np
-from numpy.linalg import inv, norm
 import torch
-import scipy.integrate
-from scipy.spatial.transform import Rotation
-from rotorpy.vehicles.hummingbird_params import quad_params
 from torchdiffeq import odeint
-import time
 import roma
 
 """
@@ -52,7 +47,8 @@ class BatchedMultirotor(object):
                                 'cmd_ctatt': the controller commands a collective thrust and attitude (as a quaternion).
                                 'cmd_vel': the controller commands a velocity vector in the world frame. 
                                 'cmd_acc': the controller commands a mass normalized thrust vector (acceleration) in the world frame.
-        aero: boolean, determines whether or not aerodynamic drag forces are computed. 
+        aero: boolean, determines whether or not aerodynamic drag forces are computed.
+        integrator: str, "dopri5" or "rk4", which are adaptive or fixed step size integrators. "rk4" will be faster, but potentially less accurate.
     """
     def __init__(self, quad_params,
                        num_drones,
@@ -60,6 +56,7 @@ class BatchedMultirotor(object):
                        device,
                        control_abstraction='cmd_motor_speeds',
                        aero = True,
+                       integrator='dopri5'
                 ):
         """
         Initialize quadrotor physical parameters.
@@ -145,10 +142,9 @@ class BatchedMultirotor(object):
         self.aero = aero
         self.num_drones = num_drones
 
-        # self.compute_body_wrench = torch.jit.trace(self.compute_body_wrench,
-        #                                            (torch.rand((self.num_drones, 3)),
-        #                                            torch.rand(self.num_drones, 4),
-        #                                            torch.rand(self.num_drones, 3)))
+        assert integrator == 'dopri5' or integrator == "rk4"
+        self.integrator = integrator
+
 
     def extract_geometry(self):
         """
@@ -189,8 +185,6 @@ class BatchedMultirotor(object):
         return state_dot 
 
 
-    # TODO(hersh500): add the ability to selectively step certain drones. This will be useful if some drones
-    # crash or finish their trajectories earlier than others.
     def step(self, state, control, t_step, idxs=None, debug=False):
         """
         Integrate dynamics forward from state given constant control for time t_step.
@@ -210,7 +204,7 @@ class BatchedMultirotor(object):
 
         # Option 1 - RK45 integration
         # sol = scipy.integrate.solve_ivp(s_dot_fn, (0, t_step), s, first_step=t_step)
-        sol = odeint(s_dot_fn, s[idxs], t=torch.tensor([0.0, t_step], device=self.device), method='dopri5')
+        sol = odeint(s_dot_fn, s[idxs], t=torch.tensor([0.0, t_step], device=self.device), method=self.integrator)
         # s = sol['y'][:,-1]
         s = sol[-1,:]
         # Option 2 - Euler integration
@@ -452,23 +446,3 @@ class BatchedMultirotor(object):
         state['wind'][idxs] = s[:,13:16]
         state['rotor_speeds'][idxs] = s[:,16:]
         return state
-
-
-def merge_rotorpy_states(states):
-    array_keys = ["x", "v", "q", "w", "wind", "rotor_speeds"]
-    merged_states = {}
-    for key in array_keys:
-        merged_states[key] = torch.cat([torch.from_numpy(f[key]).unsqueeze(0).double() for f in states], dim=0)
-    return merged_states
-
-
-def merge_flat_outputs(flat_outputs, device):
-    # these are the important keys that the controller uses
-    array_keys = ["x", "x_dot", 'x_ddot']
-    scalar_keys = ["yaw", "yaw_dot"]
-    merged_flat_outputs = {}
-    for key in array_keys:
-        merged_flat_outputs[key] = torch.cat([torch.from_numpy(f[key]).unsqueeze(0).double() for f in flat_outputs], dim=0).double().to(device)
-    for key in scalar_keys:
-        merged_flat_outputs[key] = torch.from_numpy(np.array([f[key] for f in flat_outputs])).double().to(device)
-    return merged_flat_outputs

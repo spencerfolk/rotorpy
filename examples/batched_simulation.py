@@ -2,10 +2,9 @@ import numpy as np
 import torch
 import time
 import matplotlib.pyplot as plt
-import torch.multiprocessing as mp
 
 from rotorpy.trajectories.minsnap import MinSnap, BatchedMinSnap
-from rotorpy.vehicles.batched_multirotor import BatchedMultirotor, merge_rotorpy_states, merge_flat_outputs
+from rotorpy.vehicles.batched_multirotor import BatchedMultirotor
 from rotorpy.vehicles.multirotor import Multirotor
 from rotorpy.controllers.quadrotor_control import BatchedSE3Control, SE3Control
 from rotorpy.vehicles.crazyflie_params import quad_params
@@ -19,7 +18,7 @@ from rotorpy.sensors.external_mocap import MotionCapture
 from rotorpy.estimators.nullestimator import NullEstimator
 
 
-def batched_worker(trajectory, vehicle, controller, x0):
+def batched_mp_worker(trajectory, vehicle, controller, x0):
     torch.set_num_threads(1)
     torch.multiprocessing.set_sharing_strategy('file_system')
     t = 0
@@ -47,7 +46,7 @@ def main():
     device = torch.device("cpu")
 
     #### Initial Drone States ####
-    num_drones = 100
+    num_drones = 10
     init_rotor_speed = 1788.53
     x0 = {'x': torch.zeros(num_drones,3, device=device).double(),
           'v': torch.zeros(num_drones, 3, device=device).double(),
@@ -66,12 +65,16 @@ def main():
      #### Generate Trajectories ####
     world = World({"bounds": {"extents": [-10, 10, -10, 10, -10, 10]}, "blocks": []})
     num_waypoints = 4
-    v_avg_des = 2.0
+    v_avg_des = 3.0
     positions = x0['x']
     trajectories = []
     ref_traj_gen_start_time = time.time()
+
+    # Generate the same trajectories each time.
+    np.random.seed(10)
+
+
     num_done = 0
-    np.random.seed(10)   # deterministic for testing purposes
     while num_done < num_drones:
         waypoints = np.array(sample_waypoints(num_waypoints, world, start_waypoint=positions[num_done].cpu().numpy(),
                                               min_distance=1.0, max_distance=2.0))
@@ -83,6 +86,8 @@ def main():
         except TypeError:
             continue
 
+    # Set to 0 if you want sim results to be more deterministic
+    quad_params["motor_noise_std"] = 50
     kp_pos = torch.tensor([6.5, 6.5, 15]).repeat(num_drones, 1).double()
     kd_pos = torch.tensor([4.0, 4.0, 9]).repeat(num_drones, 1).double()
     kp_att = torch.tensor([544]).repeat(num_drones, 1).double()
@@ -94,23 +99,14 @@ def main():
                                    kd_pos=kd_pos,
                                    kp_att=kp_att,
                                    kd_att=kd_att)
-    vehicle = BatchedMultirotor(quad_params, num_drones, x0, device=device)
+    vehicle = BatchedMultirotor(quad_params, num_drones, x0, device=device, integrator='dopri5')
+    # vehicle = BatchedMultirotor(quad_params, num_drones, x0, device=device, integrator='rk4')
     print(f"Time to Generate reference trajectories: {time.time() - ref_traj_gen_start_time}")
 
     controller_single = SE3Control(quad_params)
     vehicle_single = Multirotor(quad_params, initial_state=x0_single)
-    vehicle_single.motor_noise = 0
 
     dt = 0.01
-
-    # CPU multiprocessing example
-    # mp_batched_start_time = time.time()
-    # num_mp_sims = 10
-    # args = [(BatchedMinSnap(trajectories, device=device), BatchedMultirotor(quad_params, num_drones, dict(x0), device=device), SE3ControlBatch(quad_params, device=device), dict(x0)) for _ in range(num_mp_sims)]
-    # pool = mp.Pool(processes=num_mp_sims)
-    # results = pool.starmap(batched_worker, args)
-    # print(f"time to simulate {num_drones * num_mp_sims} using mp and batching: {time.time() - mp_batched_start_time}")
-
     sim_fn_start_time = time.time()
     t_fs = np.array([trajectory.t_keyframes[-1] for trajectory in trajectories])
 
@@ -121,6 +117,7 @@ def main():
     exit_statuses = results[-2]
     print(f"time to simulate {num_drones} batched using simulate() fn infra : {time.time() - sim_fn_start_time}")
 
+    #### Sequential Simulation ####
     all_seq_states = []
     mocap_params = {'pos_noise_density': 0.0005*np.ones((3,)),  # noise density for position
                     'vel_noise_density': 0.0010*np.ones((3,)),          # noise density for velocity
@@ -148,6 +145,7 @@ def main():
     print(f"time to simulate {num_drones} sequentially: {time.time() - series_start_time}")
     print(f"average fps of series simulation was {total_frames/total_time}")
 
+    # Plot positions
     num_to_plot = 3
     fig, ax = plt.subplots(num_to_plot, 3)
     which_sim = np.random.choice(num_drones, num_to_plot, replace=False)
@@ -159,6 +157,17 @@ def main():
             ax[j][dimension].plot(simulate_fn_states['x'][:simulate_fn_done_times[sim_idx], int(sim_idx), dimension], label='batched')
             ax[j][dimension].legend()
             ax[j][dimension].set_ylabel(dims[dimension])
+    fig.tight_layout()
+
+    # Plot Body Rates
+    fig2, ax2 = plt.subplots(num_to_plot, 3)
+    dims = ["w_x", "w_y", "w_z"]
+    for j, sim_idx in enumerate(which_sim):
+        for dimension in range(3):
+            ax2[j][dimension].plot(all_seq_states[int(sim_idx)]['w'][:,dimension], label='sequential')
+            ax2[j][dimension].plot(simulate_fn_states['w'][:simulate_fn_done_times[sim_idx], int(sim_idx), dimension], label='batched')
+            ax2[j][dimension].legend()
+            ax2[j][dimension].set_ylabel(dims[dimension])
     fig.tight_layout()
     plt.show()
 

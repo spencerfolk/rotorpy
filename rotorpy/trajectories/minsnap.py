@@ -376,9 +376,9 @@ class BatchedMinSnap:
         result = torch.sum(polynomial_coeffs * ts_powers, dim=-1)
         return result
 
-    def update(self, t):
+    def update(self, t: np.ndarray):
         '''
-        Evaluates each trajectory at time t, and returns the flat_outputs in the same format as RotorPy.
+        Evaluates trajectory [i] at time t[i], and returns the flat_outputs in the same format as RotorPy.
         '''
         segment_idxs = torch.zeros(self.num_trajs).int()
         ts = torch.zeros(self.num_trajs)

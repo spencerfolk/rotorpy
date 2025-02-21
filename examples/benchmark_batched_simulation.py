@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import copy
 
 from rotorpy.trajectories.minsnap import MinSnap, BatchedMinSnap
-from rotorpy.vehicles.batched_multirotor import BatchedMultirotor, merge_rotorpy_states, merge_flat_outputs
+from rotorpy.vehicles.batched_multirotor import BatchedMultirotor
 from rotorpy.vehicles.multirotor import Multirotor
 from rotorpy.controllers.quadrotor_control import BatchedSE3Control, SE3Control
 from rotorpy.vehicles.crazyflie_params import quad_params
@@ -46,7 +46,7 @@ def get_single_initial_state():
 def run_sequential_sim(traj, world, x0, dt):
     controller_single = SE3Control(quad_params)
     vehicle_single = Multirotor(quad_params, initial_state=x0)
-    vehicle_single.motor_noise = 0
+    # vehicle_single.motor_noise = 0
     mocap_params = {'pos_noise_density': 0.0005*np.ones((3,)),  # noise density for position
                     'vel_noise_density': 0.0010*np.ones((3,)),          # noise density for velocity
                     'att_noise_density': 0.0005*np.ones((3,)),          # noise density for attitude
@@ -74,7 +74,7 @@ def run_sequential_sim(traj, world, x0, dt):
 # finish at the same time. In practice, if you have a different trajectory for each drone, some will finish earlier than others,
 # which will change the actual average FPS you obtain with the batched simulation (will probably make it worse).
 
-# Example results on a machine with AMD Ryzen 9 3900X, 32GB RAM, NVidia 2080 Super:
+# Example results on a machine with AMD Ryzen 9 3900X, 32GB RAM, NVidia 2080 Super, using 'dopri5' integration:
 # (Measuring GPU VRAM usage is imprecise and was obtained through monitoring nvidia-smi)
 # seq fps was 600.5703604578299
 # Peak memory usage so far = 462.84375 Mb
@@ -125,6 +125,8 @@ def main():
     cpu_times = []
     gpu_times = []
 
+    cpu_ram_usage = []
+
     x0 = get_single_initial_state()
     world = World({"bounds": {"extents": [-10, 10, -10, 10, -10, 10]}, "blocks": []})
     num_waypoints = 4
@@ -137,23 +139,27 @@ def main():
     traj = MinSnap(waypoints, v_avg=v_avg_des, verbose=False)
 
     seq_states, seq_fps = run_sequential_sim(traj, world, x0, sim_dt)
-    print(f"peak memory usage for sequential simulation was {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024}")
+    seq_ram_usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024
+    cpu_ram_usage.append(seq_ram_usage)
+    print(f"peak memory usage for sequential simulation was {seq_ram_usage}")
     print(f"seq fps was {seq_fps}")
 
     device = torch.device("cpu")
+    integrator = 'dopri5'   # 'rk4' for fixed step size (faster)
     # Get CPU FPS
     for batch_size in batch_sizes:
         trajectories = [copy.deepcopy(traj) for _ in range(batch_size)]  # keep trajectory constant to eliminate one variable
         initial_states = get_batch_initial_states(batch_size, device)
         controller = BatchedSE3Control(quad_params, batch_size, device=device)
-        vehicle = BatchedMultirotor(quad_params, batch_size, initial_states, device=device)
+        vehicle = BatchedMultirotor(quad_params, batch_size, initial_states, device=device, integrator=integrator)
         t_fs = np.array([trajectory.t_keyframes[-1] for trajectory in trajectories])
         batched_traj = BatchedMinSnap(trajectories, device=device)
         wind_profile = NoWind(batch_size)
 
         start_time = time.time()
         results = simulate_batch(world, initial_states, vehicle, controller, batched_traj, wind_profile, t_fs, sim_dt, 0.25, print_fps=False)
-        print(f"Peak memory usage so far = {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024} mb")
+        cpu_ram_usage.append(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024)
+        print(f"Peak memory usage so far = {cpu_ram_usage[-1]} mb")
         total_frames = np.sum(results[-1])  # sum the timesteps at which each drone finished.
         done_time = time.time() - start_time
         cpu_fps.append(total_frames/done_time)
@@ -168,7 +174,7 @@ def main():
             trajectories = [copy.deepcopy(traj) for _ in range(batch_size)]  # keep trajectory constant to eliminate one variable
             initial_states = get_batch_initial_states(batch_size, device)
             controller = BatchedSE3Control(quad_params, batch_size, device=device)
-            vehicle = BatchedMultirotor(quad_params, batch_size, initial_states, device=device)
+            vehicle = BatchedMultirotor(quad_params, batch_size, initial_states, device=device, integrator=integrator)
             t_fs = np.array([trajectory.t_keyframes[-1] for trajectory in trajectories])
             batched_traj = BatchedMinSnap(trajectories, device=device)
             wind_profile = NoWind(batch_size)
@@ -181,12 +187,12 @@ def main():
             gpu_times.append(done_time)
             print(f"For batch size {batch_size}, GPU FPS = {total_frames/done_time}")
 
-    fig, ax = plt.subplots(1, 2)
+    fig, ax = plt.subplots(1, 3, figsize=(10, 3))
     ax[0].plot(batch_sizes, cpu_fps, label="CPU")
     if len(gpu_fps) > 0:
         ax[0].plot(batch_sizes, gpu_fps, label="GPU")
     ax[0].axhline(seq_fps, linestyle="--", label="Sequential")
-    ax[0].set_title("Batch Size vs. Obtained FPS")
+    ax[0].set_title(f"Batch Size vs. Obtained FPS with integrator {integrator}")
     ax[0].set_xlabel("Batch Size")
     ax[0].set_ylabel("FPS")
     ax[0].legend()
@@ -194,10 +200,15 @@ def main():
     ax[1].plot(batch_sizes, cpu_times, label="CPU")
     if len(gpu_times) > 0:
         ax[1].plot(batch_sizes, gpu_times, label="GPU")
-    ax[1].set_title("Batch Size vs. Wall-Clock Time")
+    ax[1].set_title(f"Batch Size vs. Wall-Clock Time with integrator {integrator}")
     ax[1].set_xlabel("Batch Size")
     ax[1].set_ylabel("Time Taken")
     ax[1].legend()
+
+    ax[2].plot([1] + batch_sizes, cpu_ram_usage)
+    ax[2].set_title("Batch Size vs. CPU RAM Usage")
+    ax[2].set_ylabel("RAM used (MB)")
+    ax[2].set_xlabel("Batch Size")
     fig.tight_layout()
     plt.show()
 
