@@ -43,32 +43,44 @@ def test_batched_operators():
     batched_ctrlr = BatchedSE3Control(batch_params, num_drones, device)
     batch_control_inputs = batched_ctrlr.update(0, batch_state, batch_flat_output)
 
-    batched_multirotor = BatchedMultirotor(batch_params, num_drones, batch_state, device)
-
-    batch_next_state = batched_multirotor.step(batch_state, batch_control_inputs, 0.01)
-
     # Make sure that BatchedSE3Control does the same thing as SE3Control
     # Make sure that BatchedMultirotor does the same thing as MultiRotor
+    control_abstractions = ["cmd_motor_speeds", "cmd_motor_thrusts", "cmd_ctbm", "cmd_ctbr",
+                            "cmd_ctatt", "cmd_vel", "cmd_acc"]
     for j in range(num_drones):
         single_ctrlr = SE3Control(all_quad_params[j])
-        single_multirotor = Multirotor(all_quad_params[j])
         seq_state = {key: batch_state[key][j].cpu().numpy() for key in batch_state.keys()}
         flat_output = {key: batch_flat_output[key][j].cpu().numpy() for key in batch_flat_output.keys()}
         seq_control_input = single_ctrlr.update(0, seq_state, flat_output)
         for key in batch_control_inputs.keys():
+            # print(key)
+            # print(batch_control_inputs[key][j].cpu().numpy())
+            # print("-")
+            # print(seq_control_input[key])
+            # print("--------------")
             assert np.all(np.abs(batch_control_inputs[key][j].cpu().numpy() - seq_control_input[key]) < 1e-3)
 
-        seq_next_state = single_multirotor.step(seq_state, seq_control_input, 0.01)
-        for key in batch_next_state.keys():
-            # since rotor speeds are large, we need a higher tolerance here.
-            # Or, something is just wrong, idk. But it's close enough.
-            if key == "rotor_speeds":
-                assert np.all(np.abs(batch_next_state[key][j].cpu().numpy() - seq_next_state[key]) < 1)
-            else:
-                # print(batch_next_state[key][j].cpu().numpy())
-                # print(seq_next_state[key])
-                # print("--------------")
-                assert np.all(np.abs(batch_next_state[key][j].cpu().numpy() - seq_next_state[key]) < 1e-2)
+    for abstraction in control_abstractions:
+        print(f"Testing control abstraction = {abstraction}")
+        batched_multirotor = BatchedMultirotor(batch_params, num_drones, batch_state, device, control_abstraction=abstraction)
+        batch_next_state = batched_multirotor.step(batch_state, batch_control_inputs, 0.01)
+        for j in range(num_drones):
+            single_ctrlr = SE3Control(all_quad_params[j])
+            seq_state = {key: batch_state[key][j].cpu().numpy() for key in batch_state.keys()}
+            flat_output = {key: batch_flat_output[key][j].cpu().numpy() for key in batch_flat_output.keys()}
+            seq_control_input = single_ctrlr.update(0, seq_state, flat_output)
+            single_multirotor = Multirotor(all_quad_params[j], control_abstraction=abstraction)
+            seq_next_state = single_multirotor.step(seq_state, seq_control_input, 0.01)
+            for key in batch_next_state.keys():
+                # since rotor speeds are large, we need a higher tolerance here.
+                # Or, something is just wrong, idk. But it's close enough.
+                if key == "rotor_speeds":
+                    assert np.all(np.abs(batch_next_state[key][j].cpu().numpy() - seq_next_state[key]) < 1)
+                else:
+                    # print(batch_next_state[key][j].cpu().numpy())
+                    # print(seq_next_state[key])
+                    # print("--------------")
+                    assert np.all(np.abs(batch_next_state[key][j].cpu().numpy() - seq_next_state[key]) < 1e-2)
 
 
 if __name__ == "__main__":

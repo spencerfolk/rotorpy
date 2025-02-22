@@ -49,7 +49,7 @@ def main():
     #### Generate Trajectories ####
     world = World({"bounds": {"extents": [-10, 10, -10, 10, -10, 10]}, "blocks": []})
     num_waypoints = 4
-    v_avg_des = 3.0
+    v_avg_des = 2.0
 
     # when interfacing with some of the standard rotorpy hardware, you'll have to convert from torch -> numpy.
     positions = x0['x'].cpu().numpy()
@@ -69,6 +69,9 @@ def main():
     # Set to 0 if you want sim results to be more deterministic (default value is 100)
     cf_quad_params["motor_noise_std"] = 0
     hb_quad_params["motor_noise_std"] = 0
+
+    # control_abstraction = "cmd_motor_speeds"  # the default abstraction
+    control_abstraction = "cmd_motor_thrusts"
 
     # We'll simulate half crazyflies, half hummingbirds
     all_quad_params = [cf_quad_params]*(num_drones//2) + [hb_quad_params]*(num_drones//2)
@@ -100,7 +103,7 @@ def main():
     # Define a batched multirotor, which simulates all drones in the batch simultaneously.
     # Choose 'dopri5' to mimic scipy's default solve_ivp behavior with an adaptive step size, or 'rk4'
     # for a fixed step-size integrator, which is lower-fidelity but much faster.
-    vehicle = BatchedMultirotor(batch_params, num_drones, x0, device=device, integrator='dopri5')
+    vehicle = BatchedMultirotor(batch_params, num_drones, x0, device=device, integrator='dopri5', control_abstraction=control_abstraction)
 
     dt = 0.01
 
@@ -153,7 +156,7 @@ def main():
     total_frames = 0
     for d in range(num_drones):
         controller_single = SE3Control(all_quad_params[d])
-        vehicle_single = Multirotor(all_quad_params[d], initial_state=x0_single)
+        vehicle_single = Multirotor(all_quad_params[d], initial_state=x0_single, control_abstraction=control_abstraction)
         start_time = time.time()
         single_result = simulate(world, x0_single, vehicle_single, controller_single, trajectories[d],
                                  NoWind(), Imu(sampling_rate=int(1/dt)), mocap, NullEstimator(),

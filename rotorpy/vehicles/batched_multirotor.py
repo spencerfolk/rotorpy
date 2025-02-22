@@ -177,10 +177,10 @@ class BatchedMultirotor(object):
         Integrate dynamics forward from state given constant cmd_rotor_speeds for time t_step.
         """
 
-        cmd_rotor_speeds = self.get_cmd_motor_speeds(state, control)
+        cmd_rotor_speeds = self.get_cmd_motor_speeds(state, control, idxs)
 
         # The true motor speeds can not fall below min and max speeds.
-        cmd_rotor_speeds = torch.clip(cmd_rotor_speeds, self.params.rotor_speed_min, self.params.rotor_speed_max)
+        cmd_rotor_speeds = torch.clip(cmd_rotor_speeds, self.params.rotor_speed_min[idxs], self.params.rotor_speed_max[idxs])
 
         # Form autonomous ODE for constant inputs and integrate one time step.
         def s_dot_fn(t, s):
@@ -202,10 +202,10 @@ class BatchedMultirotor(object):
         """
         if idxs is None:
             idxs = [i for i in range(self.num_drones)]
-        cmd_rotor_speeds = self.get_cmd_motor_speeds(state, control)
+        cmd_rotor_speeds = self.get_cmd_motor_speeds(state, control, idxs)
 
         # The true motor speeds can not fall below min and max speeds.
-        cmd_rotor_speeds = torch.clip(cmd_rotor_speeds, self.params.rotor_speed_min, self.params.rotor_speed_max)
+        cmd_rotor_speeds = torch.clip(cmd_rotor_speeds, self.params.rotor_speed_min[idxs], self.params.rotor_speed_max[idxs])
 
         # Form autonomous ODE for constant inputs and integrate one time step.
         def s_dot_fn(t, s):
@@ -232,6 +232,7 @@ class BatchedMultirotor(object):
 
         return state
 
+    # Cmd rotor speeds should already have the appropriate drones selected.
     def _s_dot_fn(self, t, s, cmd_rotor_speeds, idxs):
         """
         Compute derivative of state for quadrotor given fixed control inputs as
@@ -249,7 +250,7 @@ class BatchedMultirotor(object):
         R = roma.unitquat_to_rotmat(state['q'][idxs]).double()
 
         # Rotor speed derivative
-        rotor_accel = (1/self.params.tau_m[idxs])*(cmd_rotor_speeds[idxs] - rotor_speeds)
+        rotor_accel = (1/self.params.tau_m[idxs])*(cmd_rotor_speeds - rotor_speeds)
 
         # Position derivative.
         x_dot = state['v'][idxs]
@@ -346,19 +347,104 @@ class BatchedMultirotor(object):
 
         return (FtotB, MtotB)
 
-    def get_cmd_motor_speeds(self, state, control):
+    # FIXME(hersh500): since so much of this code is shared with the SE3 Controller, it should really be
+    # cleaned up and split into different functions that can be shared across both objects.
+    def get_cmd_motor_speeds(self, state, control, idxs):
         """
         Computes the commanded motor speeds depending on the control abstraction.
         For higher level control abstractions, we have low-level controllers that will produce motor speeds based on the higher level commmand. 
-
         """
 
         if self.control_abstraction == 'cmd_motor_speeds':
             # The controller directly controls motor speeds, so command that. 
-            return control['cmd_motor_speeds']
-        else:
-            raise ValueError("Invalid control abstraction selected for BatchedMultirotor. Options are: cmd_motor_speeds")
+            return control['cmd_motor_speeds'][idxs]
+        elif self.control_abstraction == "cmd_motor_thrusts":
+            cmd_motor_speeds = control["cmd_motor_thrusts"][idxs] / self.params.k_eta[idxs]
+            return torch.sign(cmd_motor_speeds) * torch.sqrt(torch.abs(cmd_motor_speeds))
+        elif self.control_abstraction == "cmd_ctbm":
+            cmd_thrust = control['cmd_thrust'][idxs]
+            cmd_moment = control['cmd_moment'][idxs]
+        elif self.control_abstraction == "cmd_ctbr":
+            cmd_thrust = control['cmd_thrust'][idxs]
 
+            # First compute the error between the desired body rates and the actual body rates given by state.
+            w_err = state['w'][idxs]- control['cmd_w'][idxs]
+
+            # Computed commanded moment based on the attitude error and body rate error
+            wdot_cmd = -self.k_w*w_err
+            cmd_moment = self.params.inertia[idxs]@wdot_cmd.unsqueeze(-1)
+        elif self.control_abstraction == "cmd_vel":
+            # The controller commands a velocity vector.
+            # Get the error in the current velocity.
+            v_err = state['v'][idxs] - control['cmd_v'][idxs]
+
+            # Get desired acceleration based on P control of velocity error.
+            a_cmd = -self.k_v*v_err
+
+            # Get desired force from this acceleration.
+            F_des = self.params.mass[idxs]*(a_cmd + np.array([0, 0, self.params.g]))
+
+            R = roma.unitquat_to_rotmat(state['q'][idxs]).double()
+            b3 = R @ torch.tensor([0.0, 0.0, 1.0], device=self.device).double()
+            cmd_thrust = torch.sum(F_des * b3, dim=-1).double().unsqueeze(-1)
+
+            # Follow rest of SE3 controller to compute cmd moment.
+            # Desired orientation to obtain force vector.
+            b3_des = F_des/torch.norm(F_des, dim=-1, keepdim=True)
+            c1_des = torch.tensor([1.0, 0.0, 0.0], device=self.device).unsqueeze(0).double()
+            b2_des = torch.cross(b3_des, c1_des, dim=-1) / torch.norm(torch.cross(b3_des, c1_des, dim=-1), dim=-1, keepdim=True)
+            b1_des = torch.cross(b2_des, b3_des, dim=-1)
+            R_des = torch.stack([b1_des, b2_des, b3_des], dim=-1)
+
+            # Orientation error.
+            S_err = 0.5 * (R_des.transpose(-1, -2) @ R - R.transpose(-1, -2) @ R_des)
+            att_err = torch.stack([-S_err[:, 1, 2], S_err[:, 0, 2], -S_err[:, 0, 1]], dim=-1)
+
+            # Angular control; vector units of N*m.
+            Iw = self.params.inertia[idxs] @ state['w'][idxs].unsqueeze(-1).double()
+            tmp = -self.kp_att * att_err - self.kd_att * state['w']
+            cmd_moment = (self.params.inertia[idxs] @ tmp.unsqueeze(-1)).squeeze(-1) + torch.cross(state['w'][idxs], Iw.squeeze(-1), dim=-1)
+        elif self.control_abstraction == "cmd_ctatt":
+            cmd_thrust = control["cmd_thrust"][idxs]
+            R = roma.unitquat_to_rotmat(state['q'][idxs]).double()
+            R_des = roma.unitquat_to_rotmat(control["cmd_q"]).double()
+            S_err = 0.5 * (R_des.transpose(-1, -2) @ R - R.transpose(-1, -2) @ R_des)
+            att_err = torch.stack([-S_err[:, 1, 2], S_err[:, 0, 2], -S_err[:, 0, 1]], dim=-1)
+            Iw = self.params.inertia[idxs] @ state['w'][idxs].unsqueeze(-1).double()
+            tmp = -self.kp_att * att_err - self.kd_att * state['w']
+            cmd_moment = (self.params.inertia[idxs] @ tmp.unsqueeze(-1)).squeeze(-1) + torch.cross(state['w'][idxs], Iw.squeeze(-1), dim=-1)
+        elif self.control_abstraction == "cmd_acc":
+            F_des = control['cmd_acc'][idxs]*self.params.mass[idxs]
+            R = roma.unitquat_to_rotmat(state['q'][idxs]).double()
+            b3 = R @ torch.tensor([0.0, 0.0, 1.0], device=self.device).double()
+            cmd_thrust = torch.sum(F_des * b3, dim=-1).double().unsqueeze(-1)
+
+            # Follow rest of SE3 controller to compute cmd moment.
+            # Desired orientation to obtain force vector.
+            b3_des = F_des/torch.norm(F_des, dim=-1, keepdim=True)
+            c1_des = torch.tensor([1.0, 0.0, 0.0], device=self.device).unsqueeze(0).double()
+            b2_des = torch.cross(b3_des, c1_des, dim=-1) / torch.norm(torch.cross(b3_des, c1_des, dim=-1), dim=-1, keepdim=True)
+            b1_des = torch.cross(b2_des, b3_des, dim=-1)
+            R_des = torch.stack([b1_des, b2_des, b3_des], dim=-1)
+
+            # Orientation error.
+            S_err = 0.5 * (R_des.transpose(-1, -2) @ R - R.transpose(-1, -2) @ R_des)
+            att_err = torch.stack([-S_err[:, 1, 2], S_err[:, 0, 2], -S_err[:, 0, 1]], dim=-1)
+
+            # Angular control; vector units of N*m.
+            Iw = self.params.inertia[idxs] @ state['w'][idxs].unsqueeze(-1).double()
+            tmp = -self.kp_att * att_err - self.kd_att * state['w']
+            cmd_moment = (self.params.inertia[idxs] @ tmp.unsqueeze(-1)).squeeze(-1) + torch.cross(state['w'][idxs], Iw.squeeze(-1), dim=-1)
+        else:
+            raise ValueError("Invalid control abstraction selected. Options are: cmd_motor_speeds, cmd_motor_thrusts, cmd_ctbm, cmd_ctbr, cmd_ctatt, cmd_vel, cmd_acc")
+
+        # print(f"cmd_thrust shape is {cmd_thrust.shape}")
+        # print(f"cmd_moment shape is {cmd_moment.shape}")
+        TM = torch.cat([cmd_thrust, cmd_moment.squeeze(-1)], dim=-1)
+        cmd_rotor_thrusts = (self.params.TM_to_f[idxs] @ TM.unsqueeze(1).transpose(-1, -2)).squeeze(-1)
+        cmd_motor_speeds = cmd_rotor_thrusts / self.params.k_eta[idxs]
+        cmd_motor_speeds = torch.sign(cmd_motor_speeds) * torch.sqrt(torch.abs(cmd_motor_speeds))
+        return cmd_motor_speeds
 
     @classmethod
     def rotate_k(cls, q):

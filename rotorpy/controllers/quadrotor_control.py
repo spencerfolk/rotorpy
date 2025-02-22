@@ -270,31 +270,38 @@ class BatchedSE3Control(object):
         cmd_v = -self.kp_vel[idxs] * pos_err + flat_outputs['x_dot'][idxs]
 
         control_inputs = BatchedSE3Control._unpack_control(cmd_motor_speeds,
+                                                           cmd_rotor_thrusts,
                                                            u1.unsqueeze(-1),
                                                            u2,
                                                            cmd_q,
                                                            -self.kp_att[idxs] * att_err - self.kd_att[idxs] * w_err,
                                                            cmd_v,
+                                                           F_des/self.params.mass[idxs],
                                                            idxs,
                                                            states['x'].shape[0])
 
         return control_inputs
 
     @classmethod
-    def _unpack_control(cls, cmd_motor_speeds, u1, u2, cmd_q, cmd_w, cmd_v, idxs, num_drones):
+    def _unpack_control(cls, cmd_motor_speeds, cmd_motor_thrusts,
+                        u1, u2, cmd_q, cmd_w, cmd_v, cmd_acc, idxs, num_drones):
         device = cmd_motor_speeds.device
         # fill state with zeros, then replace with appropriate indexes.
         ctrl = {'cmd_motor_speeds': torch.zeros(num_drones, 4, dtype=torch.double, device=device),
+                'cmd_motor_thrusts': torch.zeros(num_drones, 4, dtype=torch.double, device=device),
                  'cmd_thrust': torch.zeros(num_drones, 1, dtype=torch.double, device=device),
                  'cmd_moment': torch.zeros(num_drones, 3, dtype=torch.double, device=device),
                  'cmd_q': torch.zeros(num_drones, 4, dtype=torch.double, device=device),
                  'cmd_w': torch.zeros(num_drones, 3, dtype=torch.double, device=device),
-                 'cmd_v': torch.zeros(num_drones, 3, dtype=torch.double, device=device)}
+                 'cmd_v': torch.zeros(num_drones, 3, dtype=torch.double, device=device),
+                 'cmd_acc': torch.zeros(num_drones, 3, dtype=torch.double, device=device)}
 
         ctrl['cmd_motor_speeds'][idxs] = cmd_motor_speeds
+        ctrl['cmd_motor_thrusts'][idxs] = cmd_motor_thrusts
         ctrl['cmd_thrust'][idxs] = u1
         ctrl['cmd_moment'][idxs] = u2
         ctrl['cmd_q'][idxs] = cmd_q
         ctrl['cmd_w'][idxs] = cmd_w
         ctrl['cmd_v'][idxs] = cmd_v
+        ctrl['cmd_acc'][idxs] = cmd_acc
         return ctrl
