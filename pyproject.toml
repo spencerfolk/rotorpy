@@ -23,7 +23,7 @@ classifiers = [
 dependencies = [
     'cvxopt',
     'matplotlib',
-    'numpy>=1.25.0',
+    'numpy>=1.24',
     'scipy',
     'pandas',
     'tqdm',
