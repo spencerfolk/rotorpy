@@ -1,6 +1,6 @@
 [project]
 name = "rotorpy"
-version = "1.1.1"
+version = "1.1.2"
 description = "A multirotor simulator with aerodynamics for education and research."
 readme = "README.md"
 requires-python = ">=3.8"
@@ -28,10 +28,11 @@ dependencies = [
     'pandas',
     'tqdm',
     'gymnasium',
-    'roma',
-    'torch>=1.11.0',
-    'torchdiffeq'
-    'opt-einsum'
+    'roma',           # For batched sim
+    'torch>=1.11.0',  # For batched sim
+    'torchdiffeq',    # For batched sim
+    'opt-einsum',     # For batched sim
+    'timed_count', # Only for ardupilot sitl example
 ]
 
 [project.optional-dependencies]
