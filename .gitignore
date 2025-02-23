@@ -130,3 +130,6 @@ dmypy.json
 
 sandbox.py
 waypoint_traj.py
+
+# Ignore csv files. 
+*.csv
