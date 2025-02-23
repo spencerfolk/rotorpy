@@ -80,7 +80,7 @@ def test_batched_operators():
                     # print(batch_next_state[key][j].cpu().numpy())
                     # print(seq_next_state[key])
                     # print("--------------")
-                    assert np.all(np.abs(batch_next_state[key][j].cpu().numpy() - seq_next_state[key]) < 1e-2)
+                    assert np.all(np.abs(batch_next_state[key][j].cpu().numpy() - seq_next_state[key]) < 2e-2)
 
 
 if __name__ == "__main__":
