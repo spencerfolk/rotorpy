@@ -7,7 +7,7 @@ from rotorpy.vehicles.multirotor import Multirotor
 from rotorpy.vehicles.crazyflie_params import quad_params
 from rotorpy.controllers.quadrotor_control import SE3Control
 from rotorpy.trajectories.hover_traj import HoverTraj
-from rotorpy.trajectories.circular_traj import CircularTraj, ThreeDCircularTraj
+from rotorpy.trajectories.circular_traj import ThreeDCircularTraj
 from rotorpy.trajectories.lissajous_traj import TwoDLissajous
 from rotorpy.trajectories.speed_traj import ConstantSpeed
 from rotorpy.trajectories.minsnap import MinSnap
