@@ -16,7 +16,7 @@ from rotorpy.controllers.quadrotor_control import SE3Control
 
 # And a trajectory generator
 from rotorpy.trajectories.hover_traj import HoverTraj
-from rotorpy.trajectories.circular_traj import CircularTraj, ThreeDCircularTraj
+from rotorpy.trajectories.circular_traj import ThreeDCircularTraj
 from rotorpy.trajectories.lissajous_traj import TwoDLissajous
 from rotorpy.trajectories.speed_traj import ConstantSpeed
 from rotorpy.trajectories.minsnap import MinSnap
@@ -62,7 +62,7 @@ imu_frd = Imu(R_BS=T_glu2frd.as_matrix())
 # An instance of the simulator can be generated as follows: 
 sim_instance = Environment(vehicle=Ardupilot(crazyflie_params,),           # vehicle object, must be specified. 
                            controller=SE3Control(crazyflie_params),        # controller object, must be specified.
-                           trajectory=CircularTraj(radius=3),         # trajectory object, must be specified.
+                           trajectory=TwoDLissajous(),         # trajectory object, must be specified.
                            wind_profile=NoWind(),                       # OPTIONAL: wind profile object, if none is supplied it will choose no wind. 
                            sim_rate     = 1,                        # OPTIONAL: The update frequency of the simulator in Hz. Default is 100 Hz.
                            imu          = imu_frd,                       # OPTIONAL: imu sensor object, if none is supplied it will choose a default IMU sensor.
