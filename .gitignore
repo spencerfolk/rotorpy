@@ -130,3 +130,11 @@ dmypy.json
 
 sandbox.py
 waypoint_traj.py
+
+# Ignore csv files. 
+*.csv
+
+# Ignore benchmark figures. 
+/tests/*.png 
+/tests/*.pdf
+/tests/*.jpg

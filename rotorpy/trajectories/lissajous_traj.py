@@ -1,4 +1,6 @@
 import numpy as np
+import torch
+
 """
 Lissajous curves are defined by trigonometric functions parameterized in time. 
 See https://en.wikipedia.org/wiki/Lissajous_curve
@@ -75,6 +77,67 @@ class TwoDLissajous(object):
             yaw = 0
             yaw_dot = 0
             yaw_ddot = 0
+
+        flat_output = { 'x':x, 'x_dot':x_dot, 'x_ddot':x_ddot, 'x_dddot':x_dddot, 'x_ddddot':x_ddddot,
+                        'yaw':yaw, 'yaw_dot':yaw_dot, 'yaw_ddot':yaw_ddot}
+        return flat_output
+
+class BatchedTwoDLissajous(object):
+    """ 
+    This is a batched version of the TwoDLissajous trajectory.
+    """ 
+
+    def __init__(self, A_s, B_s, a_s, b_s, delta_s, x_offset_s, y_offset_s, height_s, yaw_bool_s, device='cpu'):
+        """
+        Inputs:
+            A_s := array of amplitudes on the X axis
+            B_s := array of amplitudes on the Y axis
+            a_s := array of frequencies on the X axis
+            b_s := array of frequencies on the Y axis
+            delta_s := array of phase offsets between the x and y parameterization
+            x_offset_s := array of the offset of the trajectory in the x axis
+            y_offset_s := array of the offset of the trajectory in the y axis
+            height_s := array of the z height that the lissajous occurs at
+            yaw_bool_s := array of booleans determining whether the vehicle should yaw
+            device := the device to run the simulation on
+        """
+
+        assert len(A_s) == len(B_s) == len(a_s) == len(b_s) == len(delta_s) == len(x_offset_s) == len(y_offset_s) == len(height_s) == len(yaw_bool_s), "All inputs must have the same length"
+
+        self.A_s, self.B_s = torch.tensor(A_s, device=device), torch.tensor(B_s, device=device)
+        self.a_s, self.b_s = torch.tensor(a_s, device=device), torch.tensor(b_s, device=device)
+        self.delta_s = torch.tensor(delta_s, device=device)
+        self.height_s = torch.tensor(height_s, device=device)
+        self.x_offset_s = torch.tensor(x_offset_s, device=device)
+        self.y_offset_s = torch.tensor(y_offset_s, device=device)
+        self.yaw_bool_s = torch.tensor(yaw_bool_s, device=device)
+
+        self.num_uavs = len(A_s)
+
+    def update(self, t):
+        """ 
+        Given the present time, return the desired flat output and derivatives for each uav.
+        """
+
+        x = torch.stack([self.x_offset_s + self.A_s*torch.sin(self.a_s*t + self.delta_s),
+                         self.y_offset_s + self.B_s*torch.sin(self.b_s*t),
+                         self.height_s], dim=1)
+        x_dot = torch.stack([self.a_s*self.A_s*torch.cos(self.a_s*t + self.delta_s),
+                             self.b_s*self.B_s*torch.cos(self.b_s*t),
+                             torch.zeros(self.num_uavs)], dim=1)
+        x_ddot = torch.stack([-(self.a_s)**2*self.A_s*torch.sin(self.a_s*t + self.delta_s),
+                             -(self.b_s)**2*self.B_s*torch.sin(self.b_s*t),
+                             torch.zeros(self.num_uavs)], dim=1)
+        x_dddot = torch.stack([-(self.a_s)**3*self.A_s*torch.cos(self.a_s*t + self.delta_s),
+                             -(self.b_s)**3*self.B_s*torch.cos(self.b_s*t),
+                             torch.zeros(self.num_uavs)], dim=1)
+        x_ddddot = torch.stack([(self.a_s)**4*self.A_s*torch.sin(self.a_s*t + self.delta_s),
+                             (self.b_s)**4*self.B_s*torch.sin(self.b_s*t),
+                             torch.zeros(self.num_uavs)], dim=1)
+
+        yaw = np.pi/4*np.sin(np.pi*t)*self.yaw_bool_s
+        yaw_dot = np.pi*np.pi/4*np.cos(np.pi*t)*self.yaw_bool_s
+        yaw_ddot = np.pi*np.pi*np.pi/4*np.cos(np.pi*t)*self.yaw_bool_s
 
         flat_output = { 'x':x, 'x_dot':x_dot, 'x_ddot':x_ddot, 'x_dddot':x_dddot, 'x_ddddot':x_ddddot,
                         'yaw':yaw, 'yaw_dot':yaw_dot, 'yaw_ddot':yaw_ddot}

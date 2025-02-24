@@ -3,6 +3,7 @@ import copy
 import numpy as np
 from numpy.linalg import norm
 from scipy.spatial.transform import Rotation
+from time import time as get_time
 
 class ExitStatus(Enum):
     """ Exit status values indicate the reason for simulation termination. """
@@ -15,7 +16,7 @@ class ExitStatus(Enum):
     FLY_AWAY     = 'Failure: Your quadrotor is out of control; it flew away with a position error greater than 20 meters.'
     COLLISION    = 'Failure: Your quadrotor collided with an object.'
 
-def simulate(world, initial_state, vehicle, controller, trajectory, wind_profile, imu, mocap, estimator, t_final, t_step, safety_margin, use_mocap, terminate=None):
+def simulate(world, initial_state, vehicle, controller, trajectory, wind_profile, imu, mocap, estimator, t_final, t_step, safety_margin, use_mocap, terminate=None, print_fps=False):
     """
     Perform a vehicle simulation and return the numerical results.
 
@@ -106,6 +107,7 @@ def simulate(world, initial_state, vehicle, controller, trajectory, wind_profile
     exit_status = None
 
     while True:
+        step_start_time = get_time()
         exit_status = exit_status or safety_exit(world, safety_margin, state[-1], flat[-1], control[-1])
         exit_status = exit_status or normal_exit(time[-1], state[-1])
         exit_status = exit_status or time_exit(time[-1], t_final)
@@ -124,6 +126,9 @@ def simulate(world, initial_state, vehicle, controller, trajectory, wind_profile
         state_dot = vehicle.statedot(state[-1], control[-1], t_step)
         imu_measurements.append(imu.measurement(state[-1], state_dot, with_noise=True))
         imu_gt.append(imu.measurement(state[-1], state_dot, with_noise=False))
+        fps = 1/(get_time() - step_start_time)
+        if print_fps:
+            print(f"FPS is {fps}")
 
     time    = np.array(time, dtype=float)    
     state   = merge_dicts(state)

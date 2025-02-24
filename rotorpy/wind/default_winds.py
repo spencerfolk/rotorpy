@@ -1,5 +1,6 @@
 import numpy as np
 import sys
+import torch
 
 """
 Below are some default wind objects that might be useful inputs to the system.  
@@ -12,20 +13,25 @@ class NoWind(object):
     Alternatively, you can use ConstantWind with wx=wy=wz=0. 
     """
 
-    def __init__(self):
+    def __init__(self, num_drones=1):
         """
         Inputs: 
             Nothing
         """
+        self.num_drones=num_drones
+        if self.num_drones == 1:
+            self.wind = np.array([0, 0, 0])
+        else:
+            self.wind = torch.zeros(self.num_drones, 3)
 
     def update(self, t, position):
         """
         Given the present time and position of the multirotor, return the
         current wind speed on all three axes. 
         
-        The wind should be expressed in the world coordinates. 
+        The wind should be expressed in the world coordinates.
         """
-        return np.array([0,0,0])
+        return self.wind
 
 class ConstantWind(object):
     """
@@ -33,11 +39,14 @@ class ConstantWind(object):
     Wind speed is specified on each axis. 
     """
 
-    def __init__(self, wx, wy, wz):
+    def __init__(self, wx, wy, wz, num_drones=1):
         """
         """
-
-        self.wind = np.array([wx, wy, wz])
+        self.num_drones=num_drones
+        if num_drones == 1:
+            self.wind = np.array([wx, wy, wz])
+        else:
+            self.wind = torch.tensor([wx, wy, wz]).repeat(num_drones, 1)
 
         
     def update(self, t, position):

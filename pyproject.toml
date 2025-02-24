@@ -23,12 +23,16 @@ classifiers = [
 dependencies = [
     'cvxopt',
     'matplotlib',
-    'numpy',
+    'numpy>=1.24',
     'scipy',
     'pandas',
     'tqdm',
     'gymnasium',
-    'timed_count' # Only for ardupilot sitl example
+    'roma',           # For batched sim
+    'torch>=1.11.0',  # For batched sim
+    'torchdiffeq',    # For batched sim
+    'opt-einsum',     # For batched sim
+    'timed_count', # Only for ardupilot sitl example
 ]
 
 [project.optional-dependencies]

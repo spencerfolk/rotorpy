@@ -52,6 +52,6 @@ quad_params = {
     'tau_m': 0.005,             # motor response time, seconds
     'rotor_speed_min': 0,       # rad/s
     'rotor_speed_max': 1500,    # rad/s
-    'motor_noise_std': 50,      # rad/s
+    'motor_noise_std': 0,      # rad/s
 
 }

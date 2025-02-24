@@ -1,128 +1,6 @@
 import numpy as np
+import torch
 import sys
-
-class CircularTraj(object):
-    """
-    A circle. 
-    """
-    def __init__(self, center=np.array([0,0,0]), radius=1, freq=0.2, yaw_bool=False, plane='XY', direction='CCW'):
-        """
-        This is the constructor for the Trajectory object. A fresh trajectory
-        object will be constructed before each mission.
-
-        Inputs:
-            center, the center of the circle (m)
-            radius, the radius of the circle (m)
-            freq, the frequency with which a circle is completed (Hz)
-            yaw_bool, determines if yaw motion is desired
-            plane, the plane with which the circle lies on, 'XY', 'YZ', or 'XZ' 
-            direcition, the direction of the circle, 'CCW' or 'CW'
-        """
-
-        # Check and assign inputs
-        if plane == "XY" or plane == "YZ" or plane == "XZ":
-            self.plane = plane
-        else:
-            print("CircularTraj Error: incorrect specification of plane. Must be 'XY', 'YZ', or 'XZ' ")
-            sys.exit(1)
-
-        if direction == "CW" or direction == "CCW":
-            if direction == "CW":
-                self.sign = -1
-            else:
-                self.sign = 1
-        else:
-            print("CircularTraj Error: incorrect specification of direction. Must be 'CW' or 'CCW' ")
-            sys.exit(1)
-
-        self.center = center
-        self.cx, self.cy, self.cz = center[0], center[1], center[2]
-        self.radius = radius
-        self.freq = freq
-
-        self.omega = 2*np.pi*self.freq
-        self.yaw_bool = yaw_bool
-
-
-    def update(self, t):
-        """
-        Given the present time, return the desired flat output and derivatives.
-
-        Inputs
-            t, time, s
-        Outputs
-            flat_output, a dict describing the present desired flat outputs with keys
-                x,        position, m
-                x_dot,    velocity, m/s
-                x_ddot,   acceleration, m/s**2
-                x_dddot,  jerk, m/s**3
-                x_ddddot, snap, m/s**4
-                yaw,      yaw angle, rad
-                yaw_dot,  yaw rate, rad/s
-        """
-
-        if self.plane == "XY":
-            x        = np.array([self.cx + self.radius*np.cos(self.sign*self.omega*t),
-                                self.cy + self.radius*np.sin(self.sign*self.omega*t),
-                                self.cz])
-            x_dot    = np.array([-self.radius*self.sign*self.omega*np.sin(self.sign*self.omega*t),
-                                self.radius*self.sign*self.omega*np.cos(self.sign*self.omega*t),
-                                0])
-            x_ddot   = np.array([-self.radius*((self.sign*self.omega)**2)*np.cos(self.sign*self.omega*t),
-                                -self.radius*((self.sign*self.omega)**2)*np.sin(self.sign*self.omega*t),
-                                0])
-            x_dddot  = np.array([self.radius*((self.sign*self.omega)**3)*np.sin(self.sign*self.omega*t),
-                                -self.radius*((self.sign*self.omega)**3)*np.cos(self.sign*self.omega*t),
-                                0])
-            x_ddddot = np.array([self.radius*((self.sign*self.omega)**4)*np.cos(self.sign*self.omega*t),
-                                self.radius*((self.sign*self.omega)**4)*np.sin(self.sign*self.omega*t),
-                                0])
-        elif self.plane == "YZ":
-            x        = np.array([self.cx,
-                                self.cy + self.radius*np.cos(self.sign*self.omega*t),
-                                self.cz + self.radius*np.sin(self.sign*self.omega*t)])
-            x_dot    = np.array([0,
-                                -self.radius*self.sign*self.omega*np.sin(self.sign*self.omega*t),
-                                self.radius*self.sign*self.omega*np.cos(self.sign*self.omega*t)])
-            x_ddot   = np.array([0,
-                                -self.radius*((self.sign*self.omega)**2)*np.cos(self.sign*self.omega*t),
-                                -self.radius*((self.sign*self.omega)**2)*np.sin(self.sign*self.omega*t)])
-            x_dddot  = np.array([0,
-                                self.radius*((self.sign*self.omega)**3)*np.sin(self.sign*self.omega*t),
-                                -self.radius*((self.sign*self.omega)**3)*np.cos(self.sign*self.omega*t)])
-            x_ddddot = np.array([0,
-                                self.radius*((self.sign*self.omega)**4)*np.cos(self.sign*self.omega*t),
-                                self.radius*((self.sign*self.omega)**4)*np.sin(self.sign*self.omega*t)])
-        elif self.plane == "XZ":
-            x        = np.array([self.cx + self.radius*np.cos(self.sign*self.omega*t),
-                                self.cy,
-                                self.cz + self.radius*np.sin(self.sign*self.omega*t)])
-            x_dot    = np.array([-self.radius*self.sign*self.omega*np.sin(self.sign*self.omega*t),
-                                0,
-                                self.radius*self.sign*self.omega*np.cos(self.sign*self.omega*t)])
-            x_ddot   = np.array([-self.radius*((self.sign*self.omega)**2)*np.cos(self.sign*self.omega*t),
-                                0,
-                                -self.radius*((self.sign*self.omega)**2)*np.sin(self.sign*self.omega*t)])
-            x_dddot  = np.array([self.radius*((self.sign*self.omega)**3)*np.sin(self.omega*t),
-                                0,
-                                -self.radius*((self.sign*self.omega)**3)*np.cos(self.sign*self.omega*t)])
-            x_ddddot = np.array([self.radius*((self.sign*self.omega)**4)*np.cos(self.sign*self.omega*t),
-                                0,
-                                self.radius*((self.sign*self.omega)**4)*np.sin(self.sign*self.omega*t)])
-
-        if self.yaw_bool:
-            yaw = np.pi/4*np.sin(np.pi*t)
-            yaw_dot = np.pi*np.pi/4*np.cos(np.pi*t)
-            yaw_ddot = -np.pi*np.pi*np.pi/4*np.sin(np.pi*t)
-
-        else:
-            yaw = 0
-            yaw_dot = 0
-            yaw_ddot = 0
-
-        flat_output = { 'x':x, 'x_dot':x_dot, 'x_ddot':x_ddot, 'x_dddot':x_dddot, 'x_ddddot':x_ddddot,
-                        'yaw':yaw, 'yaw_dot':yaw_dot, 'yaw_ddot':yaw_ddot}
-        return flat_output
 
 class ThreeDCircularTraj(object):
     """
@@ -183,10 +61,69 @@ class ThreeDCircularTraj(object):
         if self.yaw_bool:
             yaw = 0.8*np.pi/2*np.sin(2.5*t)
             yaw_dot = 0.8*2.5*np.pi/2*np.cos(2.5*t)
+            yaw_ddot = 0.8*(2.5**2)*np.pi/2*np.sin(2.5*t)
         else:
-            yaw = 0
-            yaw_dot = 0
+            yaw = 0.0
+            yaw_dot = 0.0
+            yaw_ddot = 0.0
 
         flat_output = { 'x':x, 'x_dot':x_dot, 'x_ddot':x_ddot, 'x_dddot':x_dddot, 'x_ddddot':x_ddddot,
-                        'yaw':yaw, 'yaw_dot':yaw_dot}
+                        'yaw':yaw, 'yaw_dot':yaw_dot, 'yaw_ddot':yaw_ddot}
+        return flat_output
+
+class BatchedThreeDCircularTraj(object):
+    """ 
+    A batched version of the ThreeDCircularTraj.
+    """
+
+    def __init__(self, centers, radii, freqs, yaw_bools, device='cpu'):
+        """ 
+        This is the batched version of ThreeDCircularTraj. Each input must be a list of the same length, M, 
+        where M is the number of circles to be completed.
+        Inputs:
+            centers, the center of each circle (m)
+            radii, the radius of each circle (m)
+            freqs, the frequency with which each circle is completed (Hz)
+        """
+
+        assert len(centers) == len(radii) == len(freqs) == len(yaw_bools), "BatchedThreeDCircularTraj Error: inputs must be of the same length"
+        self.M = len(centers)
+
+        self.centers = torch.tensor(centers, device=device)
+        self.radii = torch.tensor(radii, device=device)
+        self.freqs = torch.tensor(freqs)
+        self.yaw_bools = torch.tensor(yaw_bools, device=device)
+
+        self.omegas = (2*np.pi*self.freqs).to(device)
+
+        return 
+
+    def update(self, t):
+        """ 
+        Given the present time, return the desired flat output and derivatives.
+        """ 
+
+        x = torch.stack([self.centers[:,0] + self.radii[:,0]*torch.cos(self.omegas[:,0]*t),
+                            self.centers[:,1] + self.radii[:,1]*torch.sin(self.omegas[:,1]*t),
+                            self.centers[:,2] + self.radii[:,2]*torch.sin(self.omegas[:,2]*t)], dim=1)
+        x_dot = torch.stack([-self.radii[:,0]*self.omegas[:,0]*torch.sin(self.omegas[:,0]*t),
+                            self.radii[:,1]*self.omegas[:,1]*torch.cos(self.omegas[:,1]*t),
+                            self.radii[:,2]*self.omegas[:,2]*torch.cos(self.omegas[:,2]*t)], dim=1)
+        x_ddot = torch.stack([-self.radii[:,0]*(self.omegas[:,0]**2)*torch.cos(self.omegas[:,0]*t),
+                            -self.radii[:,1]*(self.omegas[:,1]**2)*torch.sin(self.omegas[:,1]*t),
+                            -self.radii[:,2]*(self.omegas[:,2]**2)*torch.sin(self.omegas[:,2]*t)], dim=1)
+        x_dddot = torch.stack([ self.radii[:,0]*(self.omegas[:,0]**3)*torch.sin(self.omegas[:,0]*t),
+                            -self.radii[:,1]*(self.omegas[:,1]**3)*torch.cos(self.omegas[:,1]*t),
+                             self.radii[:,2]*(self.omegas[:,2]**3)*torch.cos(self.omegas[:,2]*t)], dim=1)
+        x_ddddot = torch.stack([self.radii[:,0]*(self.omegas[:,0]**4)*torch.cos(self.omegas[:,0]*t),
+                            self.radii[:,1]*(self.omegas[:,1]**4)*torch.sin(self.omegas[:,1]*t),
+                            self.radii[:,2]*(self.omegas[:,2]**4)*torch.sin(self.omegas[:,2]*t)], dim=1)
+                        
+        yaw = 0.8*np.pi/2*np.sin(2.5*t)*self.yaw_bools
+        yaw_dot = 0.8*2.5*np.pi/2*np.cos(2.5*t)*self.yaw_bools
+        yaw_ddot = 0.8*(2.5**2)*np.pi/2*np.sin(2.5*t)*self.yaw_bools
+
+        flat_output = { 'x':x, 'x_dot':x_dot, 'x_ddot':x_ddot, 'x_dddot':x_dddot, 'x_ddddot':x_ddddot,
+                        'yaw':yaw, 'yaw_dot':yaw_dot, 'yaw_ddot':yaw_ddot}
+
         return flat_output
