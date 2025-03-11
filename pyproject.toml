@@ -1,6 +1,6 @@
 [project]
 name = "rotorpy"
-version = "1.1.1"
+version = "1.1.2"
 description = "A multirotor simulator with aerodynamics for education and research."
 readme = "README.md"
 requires-python = ">=3.8"
@@ -28,6 +28,7 @@ dependencies = [
     'pandas',
     'tqdm',
     'gymnasium',
+    'timed_count' # Only for ardupilot sitl example
 ]
 
 [project.optional-dependencies]
@@ -44,10 +45,6 @@ testing = [
 ]
 filter = [
     'filterpy == 1.4.5',
-]
-ardupilot = [
-    'ArduPilotPlugin @ git+https://github.com/TomerTip/PyArduPilotPlugin.git',
-    'timed_count' # Only for example
 ]
 
 [project.urls]
