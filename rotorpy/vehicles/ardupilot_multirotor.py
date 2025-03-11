@@ -32,9 +32,6 @@ x0 = {'x': np.array([0,0,0]),
       'rotor_speeds': np.array([0.0, 0.0, 0.0, 0.0])}
 
 
-def enu2ned(x_enu,y_enu,z_enu):
-    return [y_enu, x_enu, -z_enu]
-
 @dataclass
 class SensorData:
     sim_position : List[float]
@@ -183,9 +180,9 @@ class Ardupilot(Multirotor):
         R_frd2ned = Ardupilot.M_enu2ned * R_glu2enu * Ardupilot.M_glu2frd
 
         return SensorData(
-            enu2ned(*state["x"].tolist()),
+            state["x"].tolist(),
             R_frd2ned.as_quat(scalar_first=True).tolist(),
-            enu2ned(*state["v"].tolist()),
+            state["v"].tolist(),
             xgyro=omega_frd[0],
             ygyro=omega_frd[1],
             zgyro=omega_frd[2],
