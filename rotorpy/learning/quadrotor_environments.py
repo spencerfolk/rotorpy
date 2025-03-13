@@ -319,7 +319,7 @@ class QuadrotorEnv(gym.Env):
         terminated = (self.t >= self.max_time) or not safe
 
         # Now compute the reward based on the current state
-        self.reward = self._get_reward(observation, action) if safe else -500.0
+        self.reward = self._get_reward(observation, action) # if safe else -500.0
 
         # Finally get info
         info = self._get_info()

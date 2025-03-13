@@ -17,7 +17,7 @@ class BatchedDynamicsParams:
 
         self.rotor_pos = [quad_params["rotor_pos"] for quad_params in quad_params_list]
 
-        self.rotor_dir       = np.array([qp['rotor_directions'] for qp in quad_params_list])
+        self.rotor_dir_np       = np.array([qp['rotor_directions'] for qp in quad_params_list])
 
         self.extract_geometry()
 
@@ -57,16 +57,60 @@ class BatchedDynamicsParams:
 
         # Below is an automated generation of the control allocator matrix. It assumes that all thrust vectors are aligned
         # with the z axis.
-        # This will be slow.
         self.f_to_TM = torch.stack([torch.from_numpy(np.vstack((np.ones((1,self.num_rotors)),
                                                                 np.hstack([np.cross(self.rotor_pos[i][key],
                                                                                     np.array([0,0,1])).reshape(-1,1)[0:2] for key in self.rotor_pos[i]]),
-                                                                (k[i] * self.rotor_dir[i]).reshape(1,-1)))).to(device) for i in range(num_drones)])
+                                                                (k[i] * self.rotor_dir_np[i]).reshape(1,-1)))).to(device) for i in range(num_drones)])
         self.k_eta = torch.from_numpy(self.k_eta).unsqueeze(-1).to(device)
         self.k_m = torch.from_numpy(self.k_m).unsqueeze(-1).to(device)
-        self.rotor_dir = torch.from_numpy(self.rotor_dir).to(device)
+        self.rotor_dir = torch.from_numpy(self.rotor_dir_np).to(device)
         self.TM_to_f = torch.linalg.inv(self.f_to_TM)
 
+    # Update methods that require some additional computations
+    def update_mass(self, idx, mass):
+        self.mass[idx] = mass
+        self.weight[idx,-1] = -mass * self.g
+
+    def update_thrust_and_rotor_params(self, idx, k_eta: float=None, k_m:float =None, rotor_pos: dict=None):
+        if k_eta is not None:
+            self.k_eta[idx] = k_eta
+        if k_m is not None:
+            self.k_m[idx] = k_m
+        k_idx = self.k_m[idx]/self.k_eta[idx]
+        if rotor_pos is not None:
+            assert 'r1' in rotor_pos.keys() and 'r2' in rotor_pos.keys() and 'r3' in rotor_pos.keys() and 'r4' in rotor_pos.keys()
+            self.rotor_pos[idx] = dict(rotor_pos[k_idx])
+            rotor_geometry = np.array([]).reshape(0, 3)
+            for rotor in rotor_pos:
+                r = rotor_pos[rotor]
+                rotor_geometry = np.vstack([rotor_geometry, r])
+            self.rotor_geometry[idx] = torch.from_numpy(np.array(rotor_geometry)).double().to(self.device)
+            self.rotor_geometry_hat_maps[idx] = BatchedMultirotor.hat_map(torch.from_numpy(rotor_geometry.squeeze())).double().to(self.device)
+
+        self.f_to_TM[idx] = torch.from_numpy(np.vstack((np.ones((1,self.num_rotors)),
+                                                                np.hstack([np.cross(self.rotor_pos[idx][key],
+                                                                                    np.array([0,0,1])).reshape(-1,1)[0:2] for key in self.rotor_pos[idx]]),
+                                                                (k_idx * self.rotor_dir_np[idx]).reshape(1,-1)))).to(self.device)
+        self.TM_to_f[idx] = torch.linalg.inv(self.f_to_TM[idx])
+
+    def update_inertia(self, idx, Ixx=None, Iyy=None, Izz=None):
+        self.inertia[idx][0,0] = Ixx
+        self.inertia[idx][1,1] = Iyy
+        self.inertia[idx][2,2] = Izz
+        self.inv_inertia[idx] = torch.linalg.inv(self.inertia[idx])
+
+    def update_drag(self, idx, c_Dx=None, c_Dy=None, c_Dz=None, k_d=None, k_z=None):
+        if c_Dx is not None:
+            self.drag_matrix[idx][0,0] = c_Dx
+        if c_Dy is not None:
+            self.drag_matrix[idx][1,1] = c_Dy
+        if c_Dz is not None:
+            self.drag_matrix[idx][2,2] = c_Dz
+        if k_d is not None:
+            self.rotor_drag_matrix[idx][0,0] = k_d
+            self.rotor_drag_matrix[idx][1,1] = k_d
+        if k_z is not None:
+            self.rotor_drag_matrix[idx][2,2] = k_z
 
     def extract_geometry(self):
         """

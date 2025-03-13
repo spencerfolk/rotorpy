@@ -12,6 +12,7 @@ from rotorpy.vehicles.batched_multirotor import BatchedMultirotor, BatchedDynami
 from rotorpy.vehicles.crazyflie_params import quad_params as crazyflie_params
 from rotorpy.learning.quadrotor_reward_functions import vec_hover_reward, vec_hover_reward_positive
 from rotorpy.utils.shapes import Quadrotor
+from rotorpy.learning.learning_utils import crazyflie_randomizations, update_dynamics_params
 
 import gymnasium as gym
 from stable_baselines3.common.vec_env import VecEnv
@@ -21,7 +22,8 @@ import math
 from copy import deepcopy
 from typing import Dict, Union, Any
 
-
+DEFAULT_RESET_OPTIONS = {'initial_state': 'random', 'pos_bound': 2, 'vel_bound': 0,
+                         "randomize_params_on_reset": False, "randomization_ranges": crazyflie_randomizations}
 def _minmax_scale(x, min_values, max_values):
     '''
     Scales an array of values from
@@ -79,7 +81,7 @@ class QuadrotorVecEnv(VecEnv):
                  fig = None,                  # Figure for rendering. Optional.
                  ax = None,                   # Axis for rendering. Optional.
                  color = None,                # The color of the quadrotor.
-                 reset_options = {'initial_state': 'random', 'pos_bound': 2, 'vel_bound': 0}
+                 reset_options: Dict[str, Any] = DEFAULT_RESET_OPTIONS
                  ):
         self.num_envs = num_envs
         self.device = device
@@ -87,6 +89,8 @@ class QuadrotorVecEnv(VecEnv):
         self.vehicle_states = deepcopy(initial_state)
         if type(quad_params) == dict:
             self.quad_params = BatchedDynamicsParams([quad_params for _ in range(num_envs)], num_envs, device=self.device)
+        else:
+            self.quad_params = quad_params
         for key in self.initial_states.keys():
             self.initial_states[key] = self.initial_states[key].to(device)
 
@@ -180,19 +184,35 @@ class QuadrotorVecEnv(VecEnv):
         pass
 
     def reset_idx(self, env_idx, options):
-        pos = torch.DoubleTensor(3, device=self.device).uniform_(-options['pos_bound'], options['pos_bound'])
-        vel = torch.DoubleTensor(3, device=self.device).uniform_(-options['vel_bound'], options['vel_bound'])
-        self.vehicle_states['x'][env_idx] = pos.double()
-        self.vehicle_states['v'][env_idx] = vel.double()
-        self.vehicle_states['q'][env_idx] = torch.tensor([0, 0, 0, 1], device=self.device).double()
-        self.vehicle_states['w'][env_idx] = torch.zeros(3, device=self.device).double()
-        self.vehicle_states['wind'][env_idx] = torch.zeros(3, device=self.device).double()
-        self.vehicle_states['wind'][env_idx] = torch.zeros(3, device=self.device).double()
-        self.vehicle_states['rotor_speeds'][env_idx] = torch.ones(4, device=self.device).double() * self.default_rotor_speed
+        if options['initial_state'] == 'random':
+            pos = torch.DoubleTensor(3, device=self.device).uniform_(-options['pos_bound'], options['pos_bound'])
+            vel = torch.DoubleTensor(3, device=self.device).uniform_(-options['vel_bound'], options['vel_bound'])
+            self.vehicle_states['x'][env_idx] = pos.double()
+            self.vehicle_states['v'][env_idx] = vel.double()
+            self.vehicle_states['q'][env_idx] = torch.tensor([0, 0, 0, 1], device=self.device).double()
+            self.vehicle_states['w'][env_idx] = torch.zeros(3, device=self.device).double()
+            self.vehicle_states['wind'][env_idx] = torch.zeros(3, device=self.device).double()
+            self.vehicle_states['wind'][env_idx] = torch.zeros(3, device=self.device).double()
+            self.vehicle_states['rotor_speeds'][env_idx] = torch.ones(4, device=self.device).double() * self.default_rotor_speed
+        elif options['initial_state'] == 'deterministic':
+            self.vehicle_states = self.initial_states
+        elif isinstance(options['initial_state'], dict):
+            # Ensure the correct keys are in dict.
+            assert all(key in options['initial_state'] for key in ('x', 'v', 'q', 'w', 'wind', 'rotor_speeds'))
+            for key in options['initial_state'].keys():
+                self.vehicle_states[key][env_idx] = self.initial_states[key][env_idx].double().to(self.device)
+        else:
+            raise ValueError(
+                "You must either specify 'random', 'deterministic', or provide a dict containing your desired initial state.")
+
         self.t[env_idx] = 0.0
         self.reward[env_idx] = 0.0
 
-    def reset(self, seed=None, options={'initial_state': 'random', 'pos_bound': 2, 'vel_bound': 0}):
+        if options["randomize_params_on_reset"]:
+            update_dynamics_params(env_idx, options["randomization_ranges"], self.quad_params)
+
+    # options is there to comply with API, but it's easier to pass it in as a class member
+    def reset(self, seed=None, options=None):
         """
         Reset the environment
         Inputs:
@@ -215,6 +235,7 @@ class QuadrotorVecEnv(VecEnv):
                         'vel_bound': the min/max velocity region for random placement
 
         """
+        options = self.reset_options
         # If any options are not specified, set them to default values.
         if 'pos_bound' not in options:
             options['pos_bound'] = 2
@@ -231,27 +252,8 @@ class QuadrotorVecEnv(VecEnv):
             np.random.seed(seed)
             torch.manual_seed(seed)
 
-        if options['initial_state'] == 'random':
-            for i in range(self.num_envs):
-                self.reset_idx(i, options)
-
-        elif options['initial_state'] == 'deterministic':
-            self.vehicle_states = self.initial_states
-
-        elif isinstance(options['initial_state'], dict):
-            # Ensure the correct keys are in dict.
-            if all(key in options['initial_state'] for key in ('x', 'v', 'q', 'w', 'wind', 'rotor_speeds')):
-                self.vehicle_states = options['initial_state']
-            else:
-                raise KeyError(
-                    "Missing state keys in your initial_state. You must specify values for ('x', 'v', 'q', 'w', 'wind', 'rotor_speeds')")
-
-        else:
-            raise ValueError(
-                "You must either specify 'random', 'deterministic', or provide a dict containing your desired initial state.")
-
-        for key in self.vehicle_states.keys():
-            self.vehicle_states[key].to(self.device)
+        for i in range(self.num_envs):
+            self.reset_idx(i, options)
 
         # Reset the time
         self.t = np.zeros(self.num_envs)
@@ -450,7 +452,7 @@ class QuadrotorVecEnv(VecEnv):
         return results
 
 
-def make_default_vec_env(num_envs, quad_params, controL_mode, device,**kwargs):
+def make_default_vec_env(num_envs, quad_params, controL_mode, device, **kwargs):
     num_drones = num_envs
     init_rotor_speed = 1788.53
     x0 = {'x': torch.zeros(num_drones,3, device=device).double(),

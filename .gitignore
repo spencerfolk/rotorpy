@@ -138,3 +138,6 @@ waypoint_traj.py
 /tests/*.png 
 /tests/*.pdf
 /tests/*.jpg
+
+# DS_Store
+*.DS_Store
