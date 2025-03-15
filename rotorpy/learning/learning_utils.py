@@ -4,9 +4,9 @@ import numpy as np
 from typing import Tuple, List, Dict
 
 crazyflie_randomizations = {
-    "mass": [0.02, 0.04],
+    "mass": [0.02, 0.035],
     "k_eta": [2.3e-8, 7.0e-8],
-    "tau_m": [0.003, 0.007]
+    "tau_m": [0.004, 0.006]
 }
 
 def generate_random_dynamics_params(num_drones: int,
@@ -26,10 +26,15 @@ def generate_random_rotor_pos(num_rotors, pos_range: Tuple):
 def update_dynamics_params(idx: int,
                            ranges: dict,
                            params_obj: BatchedDynamicsParams):
+    min_k_eta = 0
     if "mass" in ranges:
-        params_obj.update_mass(idx, np.random.uniform(ranges["mass"][0], ranges["mass"][1]))
+        mass_val = np.random.uniform(ranges["mass"][0], ranges["mass"][1])
+        params_obj.update_mass(idx, mass_val)
+
+        # divide rotor speed max by 1.8 to give some margin to allow flight 
+        min_k_eta = (mass_val * (params_obj.g / 4) / ((params_obj.rotor_speed_max[idx]/1.2) ** 2)).item()
     if "k_eta" in ranges or "k_m" in ranges or "rotor_pos" in ranges:
-        k_eta = np.random.uniform(ranges["k_eta"][0],
+        k_eta = np.random.uniform(max(ranges["k_eta"][0], min_k_eta),
                                   ranges["k_eta"][1]) if "k_eta" in ranges else None
         k_m = np.random.uniform(ranges["k_m"][0],
                                 ranges["k_m"][1]) if "k_m" in ranges else None

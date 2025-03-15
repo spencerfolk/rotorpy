@@ -90,7 +90,7 @@ class BatchedDynamicsParams:
         self.f_to_TM[idx] = torch.from_numpy(np.vstack((np.ones((1,self.num_rotors)),
                                                                 np.hstack([np.cross(self.rotor_pos[idx][key],
                                                                                     np.array([0,0,1])).reshape(-1,1)[0:2] for key in self.rotor_pos[idx]]),
-                                                                (k_idx * self.rotor_dir_np[idx]).reshape(1,-1)))).to(self.device)
+                                                                (k_idx.cpu() * self.rotor_dir_np[idx]).reshape(1,-1)))).to(self.device)
         self.TM_to_f[idx] = torch.linalg.inv(self.f_to_TM[idx])
 
     def update_inertia(self, idx, Ixx=None, Iyy=None, Izz=None):

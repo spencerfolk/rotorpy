@@ -128,6 +128,7 @@ class QuadrotorVecEnv(VecEnv):
         self.rotor_speed_min = self.quad_params.rotor_speed_min.cpu().numpy()
 
         # Compute the min/max thrust by assuming the rotor is spinning at min/max speed. (also generalizes to bidirectional rotors)
+        # I think this formulation could cause issues if k_eta is different across drones - because the same action value with correspond to different thrusts?
         self.max_thrust = self.quad_params.k_eta.cpu().numpy() * self.rotor_speed_max**2
         self.min_thrust = self.quad_params.k_eta.cpu().numpy() * self.rotor_speed_min**2
 
@@ -185,8 +186,8 @@ class QuadrotorVecEnv(VecEnv):
 
     def reset_idx(self, env_idx, options):
         if options['initial_state'] == 'random':
-            pos = torch.DoubleTensor(3, device=self.device).uniform_(-options['pos_bound'], options['pos_bound'])
-            vel = torch.DoubleTensor(3, device=self.device).uniform_(-options['vel_bound'], options['vel_bound'])
+            pos = torch.rand(3, device=self.device, dtype=torch.float64) * 2 * options['pos_bound'] - options['pos_bound']
+            vel = torch.rand(3, device=self.device, dtype=torch.float64) * 2 * options['vel_bound'] - options['vel_bound']
             self.vehicle_states['x'][env_idx] = pos.double()
             self.vehicle_states['v'][env_idx] = vel.double()
             self.vehicle_states['q'][env_idx] = torch.tensor([0, 0, 0, 1], device=self.device).double()
@@ -378,7 +379,6 @@ class QuadrotorVecEnv(VecEnv):
                                   self.vehicle_states['x'][:,2] < self.world.world['bounds']['extents'][4],
                                   self.vehicle_states['x'][:,2] > self.world.world['bounds']['extents'][5]
                               ))
-
         return se.cpu().numpy()
 
     def _get_obs(self):

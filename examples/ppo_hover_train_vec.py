@@ -27,9 +27,9 @@ except:
 from stable_baselines3 import PPO                                   # We'll use PPO for training.
 from stable_baselines3.ppo.policies import MlpPolicy                # The policy will be represented by an MLP
 from stable_baselines3.common.vec_env import VecMonitor
-from stable_baselines3.common.callbacks import EvalCallback
+from stable_baselines3.common.callbacks import EvalCallback, CheckpointCallback
 
-num_envs = 256
+num_envs = 512
 device = torch.device("cpu")
 random_quad_params = generate_random_dynamics_params(num_envs, device, quad_params, crazyflie_randomizations)
 env = make_default_vec_env(num_envs,
@@ -40,21 +40,22 @@ env = make_default_vec_env(num_envs,
                            reward_fn=vec_hover_reward_positive)
 wrapped_env = VecMonitor(env)
 
+start_time = datetime.now()
 eval_env = VecMonitor(make_default_vec_env(5, quad_params, "cmd_motor_speeds", device, render_mode="3D"))
+checkpoint_callback = CheckpointCallback(save_freq=max(50000//num_envs, 1), save_path=f"{models_dir}/PPO/{start_time.strftime('%H-%M-%S')}/",
+                                         name_prefix='hover')
 
 model = PPO(MlpPolicy,
             wrapped_env,
-            n_steps=64,
+            n_steps=32,
+            batch_size=1024,
             verbose=1,
-            device="cpu",
+            device=device,
             tensorboard_log=log_dir)
 
-# TODO(hersh500): should use CheckpointCallback instead of repeatedly calling learn()
-start_time = datetime.now()
-num_timesteps = 100000
-epoch_count = 0
-while True:
-    model.learn(total_timesteps=num_timesteps, reset_num_timesteps=False,
-                tb_log_name="PPO-QuadVec_cmd-ctbr_" + start_time.strftime('%H-%M-%S'))
-    model.save(f"{models_dir}/PPO/{start_time.strftime('%H-%M-%S')}/hover_{num_timesteps*(epoch_count + 1)}")
-    epoch_count += 1
+num_timesteps = 100000 * 70
+model.learn(total_timesteps=num_timesteps, reset_num_timesteps=False,
+            tb_log_name="PPO-QuadVec_cmd-motor_" + start_time.strftime('%H-%M-%S'), 
+            callback=checkpoint_callback)
+    # model.save(f"{models_dir}/PPO/{start_time.strftime('%H-%M-%S')}/hover_{num_timesteps*(epoch_count + 1)}")
+    # epoch_count += 1
