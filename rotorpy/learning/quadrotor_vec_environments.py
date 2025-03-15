@@ -4,6 +4,7 @@ from scipy.spatial.transform import Rotation
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import warnings
+import time
 
 from stable_baselines3.common.vec_env.base_vec_env import VecEnvIndices
 
@@ -144,6 +145,8 @@ class QuadrotorVecEnv(VecEnv):
 
         self.max_vel = 4/math.sqrt(4)   # Selected so that at most the max speed is 4 m/s
         self.rotor_speed_order_mag = np.floor(np.log10(self.rotor_speed_max))
+        if render_mode.lower() == 'human':
+            render_mode = '3D'
         self.render_mode = [render_mode] * self.num_envs
         self.reward = np.zeros(self.num_envs)
 
@@ -162,8 +165,8 @@ class QuadrotorVecEnv(VecEnv):
         else:
             self.wind_profile = wind_profile
 
-        if render_mode == '3D':
-            warnings.warn("3D Rendering in Vectorized Environment does not fully work.")
+        if render_mode == '3D': 
+            warnings.warn("3D Rendering in Vectorized Environment behaves strangely during training.")
             if fig is None and ax is None:
                 self.fig = plt.figure('Visualization')
                 self.ax = self.fig.add_subplot(projection='3d')
