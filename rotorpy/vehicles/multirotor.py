@@ -182,7 +182,7 @@ class Multirotor(object):
         cmd_rotor_speeds = self.get_cmd_motor_speeds(state, control)
 
         # The true motor speeds can not fall below min and max speeds.
-        cmd_rotor_speeds = np.clip(cmd_rotor_speeds, self.rotor_speed_min, self.rotor_speed_max) 
+        cmd_rotor_speeds = np.clip(cmd_rotor_speeds, self.rotor_speed_min, self.rotor_speed_max)
 
         # Form autonomous ODE for constant inputs and integrate one time step.
         def s_dot_fn(t, s):
@@ -274,17 +274,18 @@ class Multirotor(object):
         """
 
         # Get the local airspeeds for each rotor
-        local_airspeeds = body_airspeed_vector[:, np.newaxis] + Multirotor.hat_map(body_rates)@(self.rotor_geometry.T) 
+        local_airspeeds = body_airspeed_vector[:, np.newaxis] + Multirotor.hat_map(body_rates)@(self.rotor_geometry.T)
 
         # Compute the thrust of each rotor, assuming that the rotors all point in the body z direction!
         T = np.array([0, 0, self.k_eta])[:, np.newaxis]*rotor_speeds**2
-        
+
         # Add in aero wrenches (if applicable)
         if self.aero:
             # Parasitic drag force acting at the CoM
             D = -Multirotor._norm(body_airspeed_vector)*self.drag_matrix@body_airspeed_vector
             # Rotor drag (aka H force) acting at each propeller hub.
             H = -rotor_speeds*(self.rotor_drag_matrix@local_airspeeds)
+
             # Pitching flapping moment acting at each propeller hub.
             M_flap = -self.k_flap*rotor_speeds*((Multirotor.hat_map(local_airspeeds.T).transpose(2, 0, 1))@np.array([0,0,1])).T
         else:

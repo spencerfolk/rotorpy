@@ -1,5 +1,6 @@
 import numpy as np
 import sys
+import torch
 
 """
 Below are some default wind objects that might be useful inputs to the system.  
@@ -17,15 +18,17 @@ class NoWind(object):
         Inputs: 
             Nothing
         """
+        self.wind = np.array([0, 0, 0])
 
     def update(self, t, position):
         """
         Given the present time and position of the multirotor, return the
         current wind speed on all three axes. 
         
-        The wind should be expressed in the world coordinates. 
+        The wind should be expressed in the world coordinates.
         """
-        return np.array([0,0,0])
+        return self.wind
+
 
 class ConstantWind(object):
     """
@@ -36,7 +39,6 @@ class ConstantWind(object):
     def __init__(self, wx, wy, wz):
         """
         """
-
         self.wind = np.array([wx, wy, wz])
 
         
@@ -49,6 +51,23 @@ class ConstantWind(object):
         """
 
         return self.wind
+
+
+class BatchedNoWind(object):
+    def __init__(self, num_drones):
+        self.wind = torch.zeros(num_drones, 3)
+
+    def update(self, t, position):
+        return self.wind
+
+
+class BatchedConstantWind(object):
+    def __init__(self, num_drones, wx, wy, wz):
+        self.wind = torch.tensor([wx, wy, wz]).repeat(num_drones, 1)
+
+    def update(self, t, position):
+        return self.wind
+
 
 class SinusoidWind(object):
     """

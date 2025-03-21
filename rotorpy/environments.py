@@ -155,20 +155,22 @@ class Environment():
 
         return self.result
     
-    def save_to_csv(self, fname):
+    def save_to_csv(self, savepath=None):
         """
         Save the simulation data in self.results to a file. 
         """
+
+        if savepath is None:
+            savepath = "rotorpy_simulation_results.csv"
 
         if self.result is None:
             print("Error: cannot save if no results have been generated! Aborting save.")
             return
         else:
-            if not ".csv" in fname:
-                fname = fname + ".csv"
-            path = os.path.join(os.path.dirname(__file__),'data_out',fname)
+            if not ".csv" in savepath:
+                savepath = savepath + ".csv"
             dataframe = unpack_sim_data(self.result)
-            dataframe.to_csv(path)
+            dataframe.to_csv(savepath)
 
 
 if __name__=="__main__":
