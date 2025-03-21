@@ -11,7 +11,7 @@ from rotorpy.vehicles.crazyflie_params import quad_params as cf_quad_params
 from rotorpy.vehicles.hummingbird_params import quad_params as hb_quad_params
 from rotorpy.utils.trajgen_utils import generate_random_minsnap_traj
 from rotorpy.world import World
-from rotorpy.wind.default_winds import NoWind
+from rotorpy.wind.default_winds import BatchedNoWind
 from rotorpy.batch_simulate import simulate_batch
 from rotorpy.simulate import simulate
 from rotorpy.sensors.imu import Imu
@@ -111,7 +111,7 @@ def main():
     t_fs = np.array([trajectory.t_keyframes[-1] for trajectory in trajectories])
 
     # Define a wind profile -- for batched drones, only NoWind and ConstantWind are supported rn.
-    wind_profile = NoWind(num_drones)
+    wind_profile = BatchedNoWind(num_drones)
 
     # Call the simulate_batch function, which will simulate all drones using the vectorized dynamics.
     sim_fn_start_time = time.time()

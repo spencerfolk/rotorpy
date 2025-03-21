@@ -13,16 +13,12 @@ class NoWind(object):
     Alternatively, you can use ConstantWind with wx=wy=wz=0. 
     """
 
-    def __init__(self, num_drones=1):
+    def __init__(self):
         """
         Inputs: 
             Nothing
         """
-        self.num_drones=num_drones
-        if self.num_drones == 1:
-            self.wind = np.array([0, 0, 0])
-        else:
-            self.wind = torch.zeros(self.num_drones, 3)
+        self.wind = np.array([0, 0, 0])
 
     def update(self, t, position):
         """
@@ -33,20 +29,17 @@ class NoWind(object):
         """
         return self.wind
 
+
 class ConstantWind(object):
     """
     This wind profile is constant both spatially and temporally. 
     Wind speed is specified on each axis. 
     """
 
-    def __init__(self, wx, wy, wz, num_drones=1):
+    def __init__(self, wx, wy, wz):
         """
         """
-        self.num_drones=num_drones
-        if num_drones == 1:
-            self.wind = np.array([wx, wy, wz])
-        else:
-            self.wind = torch.tensor([wx, wy, wz]).repeat(num_drones, 1)
+        self.wind = np.array([wx, wy, wz])
 
         
     def update(self, t, position):
@@ -58,6 +51,23 @@ class ConstantWind(object):
         """
 
         return self.wind
+
+
+class BatchedNoWind(object):
+    def __init__(self, num_drones):
+        self.wind = torch.zeros(num_drones, 3)
+
+    def update(self, t, position):
+        return self.wind
+
+
+class BatchedConstantWind(object):
+    def __init__(self, num_drones, wx, wy, wz):
+        self.wind = torch.tensor([wx, wy, wz]).repeat(num_drones, 1)
+
+    def update(self, t, position):
+        return self.wind
+
 
 class SinusoidWind(object):
     """

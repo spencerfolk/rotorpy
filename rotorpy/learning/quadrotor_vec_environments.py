@@ -14,6 +14,7 @@ from rotorpy.vehicles.crazyflie_params import quad_params as crazyflie_params
 from rotorpy.learning.quadrotor_reward_functions import vec_hover_reward, vec_hover_reward_positive
 from rotorpy.utils.shapes import Quadrotor
 from rotorpy.learning.learning_utils import crazyflie_randomizations, update_dynamics_params
+from rotorpy.trajectories.hover_traj import HoverTraj
 
 import gymnasium as gym
 from stable_baselines3.common.vec_env import VecEnv
@@ -23,8 +24,13 @@ import math
 from copy import deepcopy
 from typing import Dict, Union, Any
 
+
 DEFAULT_RESET_OPTIONS = {'initial_state': 'random', 'pos_bound': 2, 'vel_bound': 0,
-                         "randomize_params_on_reset": False, "randomization_ranges": crazyflie_randomizations}
+                         "params": "random", 
+                         "randomization_ranges": crazyflie_randomizations,
+                         "trajectory": "fixed"}
+
+
 def _minmax_scale(x, min_values, max_values):
     '''
     Scales an array of values from
@@ -160,8 +166,8 @@ class QuadrotorVecEnv(VecEnv):
 
         if wind_profile is None:
             # If wind is not specified, default to no wind.
-            from rotorpy.wind.default_winds import NoWind
-            self.wind_profile = NoWind(num_drones=num_envs)
+            from rotorpy.wind.default_winds import BatchedNoWind
+            self.wind_profile = BatchedNoWind(num_drones=num_envs)
         else:
             self.wind_profile = wind_profile
 
@@ -182,12 +188,17 @@ class QuadrotorVecEnv(VecEnv):
             self.title_artist = self.ax.set_title('t = {}'.format(self.t))
 
         self.default_rotor_speed = 1788.54
-        self.reset_options = reset_options
+        self.reset_options = dict(reset_options)
+
+        self.debug_states = np.zeros((min(self.num_envs, 5), int(self.max_time * self.sim_rate), 3))
+        self.counts = np.zeros(min(self.num_envs, 5))
+        self.cum_rewards = np.zeros(self.num_envs)
 
     def close(self):
         pass
 
     def reset_idx(self, env_idx, options):
+        # print(f"cumulative reward for env {env_idx}: {self.cum_rewards[env_idx]}")
         if options['initial_state'] == 'random':
             pos = torch.rand(3, device=self.device, dtype=torch.float64) * 2 * options['pos_bound'] - options['pos_bound']
             vel = torch.rand(3, device=self.device, dtype=torch.float64) * 2 * options['vel_bound'] - options['vel_bound']
@@ -211,9 +222,20 @@ class QuadrotorVecEnv(VecEnv):
 
         self.t[env_idx] = 0.0
         self.reward[env_idx] = 0.0
+        self.cum_rewards[env_idx] = 0.0
 
-        if options["randomize_params_on_reset"]:
+        if options["params"] == "random":
             update_dynamics_params(env_idx, options["randomization_ranges"], self.quad_params)
+        if env_idx < min(self.num_envs, 5) and self.render_mode[0] == "eval":
+            if self.counts[env_idx] % 10 == 0 and self.counts[env_idx] != 0:
+                print(f"Saving plot for {env_idx}")
+                fig, ax  = plt.subplots(1, 3)
+                ax[0].plot(self.debug_states[env_idx,:,0])
+                ax[1].plot(self.debug_states[env_idx,:,1])
+                ax[2].plot(self.debug_states[env_idx,:,2])
+                plt.savefig(f"debug_states_{env_idx}_{self.counts[env_idx]}.png")
+            self.debug_states[env_idx] = 0
+            self.counts[env_idx] += 1
 
     # options is there to comply with API, but it's easier to pass it in as a class member
     def reset(self, seed=None, options=None):
@@ -295,9 +317,12 @@ class QuadrotorVecEnv(VecEnv):
         # Determine whether or not the session should terminate.
         time_done = self.t >= self.max_time
         dones = np.logical_or(oob, time_done)
+        if self.render_mode[0] == "eval":
+            print(f"time {self.t}, dones = {dones}")
 
         # Now compute the reward based on the current state
         self.reward = self._get_reward(pre_termination_obs, action)
+        self.cum_rewards += self.reward
 
         # Finally get info
         infos = [{} for _ in range(self.num_envs)]
@@ -314,6 +339,8 @@ class QuadrotorVecEnv(VecEnv):
         self.render()
 
         observation = self._get_obs()
+        for i in range(min(self.num_envs, 5)):
+            self.debug_states[i,int(self.t[i]/self.t_step)] = self.vehicle_states['x'][i].cpu().numpy()
 
         return (observation, self.reward, dones, infos)
 
@@ -366,22 +393,33 @@ class QuadrotorVecEnv(VecEnv):
 
     def _is_out_of_bounds(self):
         se = torch.any(torch.abs(self.vehicle_states['v']) > 100, dim=-1)
+        if self.render_mode[0] == "eval":
+            print(se)
         se = torch.logical_or(se, torch.any(torch.abs(self.vehicle_states['w']) > 100, dim=-1))
+        if self.render_mode[0] == "eval":
+            print(se)
         se = torch.logical_or(se,
                               torch.logical_or(
                                   self.vehicle_states['x'][:,0] < self.world.world['bounds']['extents'][0],
                                   self.vehicle_states['x'][:,0] > self.world.world['bounds']['extents'][1]
                               ))
+        if self.render_mode[0] == "eval":
+            print(se)
         se = torch.logical_or(se,
                               torch.logical_or(
                                   self.vehicle_states['x'][:,1] < self.world.world['bounds']['extents'][2],
                                   self.vehicle_states['x'][:,1] > self.world.world['bounds']['extents'][3]
                               ))
+        if self.render_mode[0] == "eval":
+            print(se)
         se = torch.logical_or(se,
                               torch.logical_or(
                                   self.vehicle_states['x'][:,2] < self.world.world['bounds']['extents'][4],
                                   self.vehicle_states['x'][:,2] > self.world.world['bounds']['extents'][5]
                               ))
+        if self.render_mode[0] == "eval":
+            print(se)
+            print("----------")
         return se.cpu().numpy()
 
     def _get_obs(self):
@@ -453,6 +491,74 @@ class QuadrotorVecEnv(VecEnv):
         results = self.step(self.async_action)
         self.async_action = None
         return results
+
+
+class QuadrotorTrackingVecEnv(QuadrotorVecEnv):
+    def __init__(self,
+                 num_envs: int,
+                 initial_state: Dict,
+                 trajectory: object,
+                 traj_randomization_fn: callable = None,
+                 control_mode: str = 'cmd_vel',
+                 reward_fn = vec_hover_reward,
+                 quad_params: Union[Dict, BatchedDynamicsParams] = crazyflie_params,
+                 device = torch.device('cpu'),
+                 max_time = 10,                # Maximum time to run the simulation for in a single session.
+                 wind_profile = None,         # wind profile object, if none is supplied it will choose no wind.
+                 world        = None,         # The world object
+                 sim_rate = 100,              # The update frequency of the simulator in Hz
+                 aero = True,                 # Whether or not aerodynamic wrenches are computed.
+                 render_mode = "None",        # The rendering mode
+                 render_fps = 30,             # The rendering frames per second. Lower this for faster visualization.
+                 fig = None,                  # Figure for rendering. Optional.
+                 ax = None,                   # Axis for rendering. Optional.
+                 color = None,                # The color of the quadrotor.
+                 reset_options: Dict[str, Any] = DEFAULT_RESET_OPTIONS
+                 ):
+        super().__init__(num_envs, 
+                         initial_state, 
+                         control_mode, 
+                         reward_fn, 
+                         quad_params, 
+                         device, 
+                         max_time, 
+                         wind_profile, 
+                         world, 
+                         sim_rate, 
+                         aero, 
+                         render_mode, 
+                         render_fps, 
+                         fig, 
+                         ax, 
+                         color, 
+                         reset_options)
+        # assert hasattr(trajectory, "num_drones") or hasattr(trajectory, "num_uavs") 
+        assert trajectory.update(0)["x"].shape[0] == self.num_envs
+        # assert trajectory.device == self.device
+        self.trajectory = trajectory
+
+        # quad state, x_flat, x_dot_flat, yaw_flat, yaw_dot_flat
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(21,), dtype=np.float32)
+        if reset_options["trajectory"] == "random":
+            assert traj_randomization_fn is not None
+            self.traj_randomization_fn = traj_randomization_fn
+
+    def reset_idx(self, env_idx, options):
+        super().reset_idx(env_idx, options)
+        if self.reset_options["trajectory"] == "random":
+            self.traj_randomization_fn(env_idx, self.trajectory)
+
+    def _get_obs(self):
+        state_vec = torch.cat([self.vehicle_states['x'],
+                               self.vehicle_states['v'],
+                               self.vehicle_states['q'],
+                               self.vehicle_states['w']], dim=-1)
+        flat_output = self.trajectory.update(torch.from_numpy(self.t+self.t_step))  # return the flat output at the next timestep
+        flat_output_vec = torch.cat([flat_output["x"], 
+                                     flat_output["x_dot"], 
+                                     flat_output["yaw"].unsqueeze(-1), 
+                                     flat_output["yaw"].unsqueeze(-1)], dim=-1)
+        return torch.cat([state_vec, flat_output_vec], dim=-1).float().cpu().numpy()
 
 
 def make_default_vec_env(num_envs, quad_params, controL_mode, device, **kwargs):

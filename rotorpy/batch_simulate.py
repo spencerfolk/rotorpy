@@ -77,7 +77,7 @@ def simulate_batch(world,
     assert(torch.is_tensor(initial_states[k]) for k in initial_states.keys())
 
     if wind_profile is None:
-        wind_profile = rotorpy.wind.default_winds.NoWind(vehicles.num_drones)
+        wind_profile = rotorpy.wind.default_winds.BatchedNoWind(vehicles.num_drones)
     assert(wind_profile.num_drones == vehicles.num_drones)
     if len(world.world['blocks']) > 0:
         raise Warning("Batched simulation does not check for collisions.")

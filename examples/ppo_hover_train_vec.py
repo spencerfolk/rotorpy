@@ -38,7 +38,7 @@ env = make_default_vec_env(num_envs,
                            device,
                            render_mode="None",
                            reward_fn=vec_hover_reward_positive)
-env.reset_options["randomize_params_on_reset"] = True
+env.reset_options["params"] = "random"
 wrapped_env = VecMonitor(env)
 
 start_time = datetime.now()
