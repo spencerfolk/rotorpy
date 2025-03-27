@@ -10,13 +10,13 @@ from rotorpy.learning.quadrotor_reward_functions import vec_hover_reward_positiv
 from rotorpy.learning.learning_utils import *
 
 
-# First we'll set up some directories for saving the policy and logs.
 models_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "rotorpy", "learning", "policies")
 log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "rotorpy", "learning", "logs")
 if not os.path.exists(models_dir):
     os.makedirs(models_dir)
 if not os.path.exists(log_dir):
     os.makedirs(log_dir)
+
 
 # Next import Stable Baselines.
 try:
@@ -29,23 +29,28 @@ from stable_baselines3.ppo.policies import MlpPolicy                # The policy
 from stable_baselines3.common.vec_env import VecMonitor
 from stable_baselines3.common.callbacks import EvalCallback, CheckpointCallback, CallbackList
 
+
+control_mode = "cmd_ctatt"
 num_envs = 512
 device = torch.device("cpu")
 random_quad_params = generate_random_dynamics_params(num_envs, device, quad_params, crazyflie_randomizations)
 env = make_default_vec_env(num_envs,
                            random_quad_params,
-                           "cmd_ctbr",
+                           control_mode,
                            device,
                            render_mode="None",
                            reward_fn=vec_hover_reward_positive)
 env.reset_options["params"] = "random"
+env.reset_options["vel_bound"] = 0.2
 wrapped_env = VecMonitor(env)
 
 start_time = datetime.now()
-eval_env = VecMonitor(make_default_vec_env(10, quad_params, "cmd_ctbr", device, render_mode="3D"))
-checkpoint_callback = CheckpointCallback(save_freq=max(50000//num_envs, 1), save_path=f"{models_dir}/PPO/{start_time.strftime('%H-%M-%S')}/",
+# First we'll set up some directories for saving the policy and logs.
+
+eval_env = VecMonitor(make_default_vec_env(10, quad_params, control_mode, device, render_mode="None", reward_fn=vec_hover_reward_positive))
+checkpoint_callback = CheckpointCallback(save_freq=max(50000//num_envs, 1), save_path=f"{models_dir}/PPO/hover_{control_mode}_{start_time.strftime('%b-%d_%H-%M')}/",
                                          name_prefix='hover')
-eval_callback = EvalCallback(eval_env, eval_freq=5e5//num_envs, deterministic=True, render=True)
+eval_callback = EvalCallback(eval_env, eval_freq=1e6//num_envs, deterministic=True, render=False)
 model = PPO(MlpPolicy,
             wrapped_env,
             n_steps=32,
@@ -56,7 +61,7 @@ model = PPO(MlpPolicy,
 
 num_timesteps = 10e6
 model.learn(total_timesteps=num_timesteps, reset_num_timesteps=False,
-            tb_log_name="PPO-QuadVec_cmd-ctbr_" + start_time.strftime('%H-%M-%S'), 
+            tb_log_name="PPO-QuadVec_"+control_mode+"_"+ start_time.strftime('%b-%d-%H-%M'),
             callback=CallbackList([checkpoint_callback, eval_callback]))
     # model.save(f"{models_dir}/PPO/{start_time.strftime('%H-%M-%S')}/hover_{num_timesteps*(epoch_count + 1)}")
     # epoch_count += 1

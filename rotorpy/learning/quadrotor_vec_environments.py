@@ -19,6 +19,7 @@ from rotorpy.trajectories.hover_traj import HoverTraj
 import gymnasium as gym
 from stable_baselines3.common.vec_env import VecEnv
 from gymnasium import spaces
+from scipy.spatial.transform import Rotation
 
 import math
 from copy import deepcopy
@@ -69,7 +70,7 @@ class QuadrotorVecEnv(VecEnv):
     """
     metadata = {"render_modes": ["None", "3D", "console"],
                 "render_fps": 30,
-                "control_modes": ['cmd_motor_speeds', 'cmd_motor_thrusts', 'cmd_ctbr', 'cmd_ctbm', 'cmd_vel']}
+                "control_modes": ['cmd_motor_speeds', 'cmd_motor_thrusts', 'cmd_ctbr', 'cmd_ctbm', 'cmd_vel', 'cmd_ctatt']}
 
     def __init__(self,
                  num_envs: int,
@@ -385,7 +386,10 @@ class QuadrotorVecEnv(VecEnv):
         elif self.control_mode == 'cmd_vel':
             # Scale the velcoity to min and max values.
             control_dict['cmd_v'] = _minmax_scale(action, -self.max_vel, self.max_vel)
-
+        elif self.control_mode == "cmd_ctatt":
+            cmd_thrust = _minmax_scale(action[...,0].reshape(-1, 1), self.quad_params.num_rotors * self.min_thrust, self.quad_params.num_rotors * self.max_thrust)
+            control_dict["cmd_thrust"] = cmd_thrust
+            control_dict["cmd_q"] = Rotation.from_euler("xyz", _minmax_scale(action[...,1:4].reshape(-1, 3), -np.pi, np.pi)).as_quat()
         return control_dict
 
     def _get_reward(self, observation, action):
@@ -561,7 +565,7 @@ class QuadrotorTrackingVecEnv(QuadrotorVecEnv):
         return torch.cat([state_vec, flat_output_vec], dim=-1).float().cpu().numpy()
 
 
-def make_default_vec_env(num_envs, quad_params, controL_mode, device, **kwargs):
+def make_default_vec_env(num_envs, quad_params, control_mode, device, **kwargs):
     num_drones = num_envs
     init_rotor_speed = 1788.53
     x0 = {'x': torch.zeros(num_drones,3, device=device).double(),
@@ -570,4 +574,4 @@ def make_default_vec_env(num_envs, quad_params, controL_mode, device, **kwargs):
           'w': torch.zeros(num_drones, 3, device=device).double(),
           'wind': torch.zeros(num_drones, 3, device=device).double(),
           'rotor_speeds': torch.tensor([init_rotor_speed, init_rotor_speed, init_rotor_speed, init_rotor_speed], device=device).repeat(num_drones, 1).double()}
-    return QuadrotorVecEnv(num_envs, initial_state=x0, quad_params=quad_params, max_time=5, control_mode=controL_mode, device=device, **kwargs)
+    return QuadrotorVecEnv(num_envs, initial_state=x0, quad_params=quad_params, max_time=5, control_mode=control_mode, device=device, **kwargs)

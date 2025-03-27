@@ -60,12 +60,13 @@ reset_options["params"] = "fixed"
 reset_options["pos_bound"] = 0.25
 reset_options["trajectory"] = "random"
 
+control_mode = "cmd_ctatt"
 env = QuadrotorTrackingVecEnv(num_envs, 
                               initial_state=x0, 
                               trajectory=trajectory,
                               quad_params=dict(quad_params), 
                               max_time=7, 
-                              control_mode="cmd_ctbr", 
+                              control_mode=control_mode, 
                               device=device,
                               render_mode="None",
                               reward_fn=vec_trajectory_reward,
@@ -99,7 +100,7 @@ eval_env = QuadrotorTrackingVecEnv(num_eval_envs,
                               trajectory=trajectory,
                               quad_params=dict(quad_params), 
                               max_time=7, 
-                              control_mode="cmd_ctbr", 
+                              control_mode=control_mode, 
                               device=device,
                               render_mode="3D",
                               reward_fn=vec_trajectory_reward,
@@ -123,5 +124,5 @@ model = PPO(MlpPolicy,
 
 num_timesteps = 15e6
 model.learn(total_timesteps=num_timesteps, reset_num_timesteps=False,
-            tb_log_name="PPO-QuadTrajVec_cmd-ctbr_" + start_time.strftime('%H-%M-%S'), 
+            tb_log_name="PPO-QuadTrajVec_"+control_mode + " " + start_time.strftime('%H-%M-%S'),
             callback=CallbackList([checkpoint_callback, eval_callback]))
