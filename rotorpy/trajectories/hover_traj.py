@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 
 class HoverTraj(object):
     """
@@ -42,3 +43,37 @@ class HoverTraj(object):
         flat_output = { 'x':x, 'x_dot':x_dot, 'x_ddot':x_ddot, 'x_dddot':x_dddot, 'x_ddddot':x_ddddot,
                         'yaw':yaw, 'yaw_dot':yaw_dot, 'yaw_ddot':yaw_ddot}
         return flat_output
+
+class BatchedHoverTraj(object):
+    """ 
+    This is a batched version of the HoverTraj trajectory above. 
+    """
+
+    def __init__(self, num_uavs, x0=None, device='cpu'):
+        """
+        Set the initial conditions for the batched hover trajectory.
+        Inputs:
+            num_uavs, the number of UAVs in the batch.
+            x0, a numpy array of shape (num_uavs, 3) containing the initial conditions. 
+                if x0 is None, the initial conditions will be set to the origin for all UAVs.
+        """
+
+        if x0 is not None:
+            assert x0.shape[0] == num_uavs, "x0 must have shape (num_uavs, 3)"
+            x0 = torch.tensor(x0)
+        else:
+            x0 = torch.zeros(num_uavs, 3)
+
+        self.num_uavs = num_uavs
+        self.x0 = x0
+
+        self.flat_outputs = { 'x':self.x0, 'x_dot':torch.zeros(num_uavs, 3), 'x_ddot':torch.zeros(num_uavs, 3),
+                              'x_dddot':torch.zeros(num_uavs, 3), 'x_ddddot':torch.zeros(num_uavs, 3),
+                              'yaw':torch.zeros(num_uavs), 'yaw_dot':torch.zeros(num_uavs), 'yaw_ddot':torch.zeros(num_uavs)}
+
+    def update(self, t):
+        """ 
+        Given the present time, return the desired flat output and derivatives for each UAV.
+        """
+
+        return self.flat_outputs

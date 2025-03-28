@@ -184,7 +184,7 @@ class QuadrotorEnv(gym.Env):
             # Close the plots
             plt.close('all')
     
-    def reset(self, seed=None, options={'initial_state': 'random', 'pos_bound': 2, 'vel_bound': 0}):
+    def reset(self, seed=None, options=None):
         """
         Reset the environment
         Inputs:
@@ -207,6 +207,8 @@ class QuadrotorEnv(gym.Env):
                         'vel_bound': the min/max velocity region for random placement
                                 
         """
+        if options is None:
+            options = {'initial_state': 'random', 'pos_bound': 2, 'vel_bound': 0}
         # If any options are not specified, set them to default values.
         if 'pos_bound' not in options:
             options['pos_bound'] = 2
@@ -317,7 +319,7 @@ class QuadrotorEnv(gym.Env):
         terminated = (self.t >= self.max_time) or not safe
 
         # Now compute the reward based on the current state
-        self.reward = self._get_reward(observation, action) if safe else -500.0
+        self.reward = self._get_reward(observation, action) # if safe else -500.0
 
         # Finally get info
         info = self._get_info()

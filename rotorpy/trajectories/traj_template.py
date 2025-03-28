@@ -2,6 +2,7 @@
 Imports
 """
 import numpy as np
+import torch
 
 class TrajTemplate(object):
     """
@@ -41,6 +42,47 @@ class TrajTemplate(object):
         yaw    = 0
         yaw_dot = 0
         yaw_ddot = 0
+
+        flat_output = { 'x':x, 'x_dot':x_dot, 'x_ddot':x_ddot, 'x_dddot':x_dddot, 'x_ddddot':x_ddddot,
+                        'yaw':yaw, 'yaw_dot':yaw_dot, 'yaw_ddot':yaw_ddot}
+        return flat_output
+
+class BatchedTrajTemplate(object):
+    """
+    This is a batched trajectory template. It's the same as the TrajTemplate class, but it's designed to work with batched environment.
+    """
+    def __init__(self, M=1):
+        """
+        This is the constructor for the BatchedTrajectory object. A fresh trajectory
+        object will be constructed before each mission.
+
+        Here the parameter M is the number of vehicles in the batch. 
+        """
+
+    def update(self, t):
+        """
+        Given the present time, return the desired flat output and derivatives for each uav.
+
+        Inputs
+            t, time, s
+        Outputs
+            flat_output, a dict describing the present desired flat outputs with keys
+                x,        position, m
+                x_dot,    velocity, m/s
+                x_ddot,   acceleration, m/s**2
+                x_dddot,  jerk, m/s**3
+                x_ddddot, snap, m/s**4
+                yaw,      yaw angle, rad
+                yaw_dot,  yaw rate, rad/s
+        """
+        x    = torch.zeros((M, 3))
+        x_dot = torch.zeros((M, 3))
+        x_ddot = torch.zeros((M, 3))
+        x_dddot = torch.zeros((M, 3))
+        x_ddddot = torch.zeros((M, 3))
+        yaw    = torch.zeros((M,))
+        yaw_dot = torch.zeros((M,))
+        yaw_ddot = torch.zeros((M,))
 
         flat_output = { 'x':x, 'x_dot':x_dot, 'x_ddot':x_ddot, 'x_dddot':x_dddot, 'x_ddddot':x_ddddot,
                         'yaw':yaw, 'yaw_dot':yaw_dot, 'yaw_ddot':yaw_ddot}

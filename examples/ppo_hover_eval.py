@@ -64,7 +64,7 @@ ax = fig.add_subplot(projection='3d')
 num_quads = 10
 def make_env():
     return gym.make("Quadrotor-v0", 
-                control_mode ='cmd_motor_speeds', 
+                control_mode ='cmd_ctbr', 
                 reward_fn = reward_function,
                 quad_params = quad_params,
                 max_time = 5,
