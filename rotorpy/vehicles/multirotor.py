@@ -75,9 +75,9 @@ class Multirotor(object):
         self.Iyz             = quad_params['Iyz']  # kg*m^2
 
         # Frame parameters
-        self.c_Dx            = quad_params['c_Dx']  # drag coeff, N/(m/s)**2
-        self.c_Dy            = quad_params['c_Dy']  # drag coeff, N/(m/s)**2
-        self.c_Dz            = quad_params['c_Dz']  # drag coeff, N/(m/s)**2
+        self.c_Dx            = quad_params.get('c_Dx', 0.0)  # drag coeff, N/(m/s)**2
+        self.c_Dy            = quad_params.get('c_Dy', 0.0)  # drag coeff, N/(m/s)**2
+        self.c_Dz            = quad_params.get('c_Dz', 0.0)  # drag coeff, N/(m/s)**2
 
         self.num_rotors      = quad_params['num_rotors']
         self.rotor_pos       = quad_params['rotor_pos']
@@ -92,13 +92,20 @@ class Multirotor(object):
 
         self.k_eta           = quad_params['k_eta']     # thrust coeff, N/(rad/s)**2
         self.k_m             = quad_params['k_m']       # yaw moment coeff, Nm/(rad/s)**2
-        self.k_d             = quad_params['k_d']       # rotor drag coeff, N/(m/s)
-        self.k_z             = quad_params['k_z']       # induced inflow coeff N/(m/s)
-        self.k_flap          = quad_params['k_flap']    # Flapping moment coefficient Nm/(m/s)
+        self.k_d             = quad_params.get('k_d', 0.0)       # rotor drag coeff, N/(m/s)
+        self.k_z             = quad_params.get('k_z', 0.0)       # induced inflow coeff N/(m/s)
+        self.k_h             = quad_params.get('k_h', 0.0)       # translational lift coeff N/(m/s)^2
+        self.k_flap          = quad_params.get('k_flap', 0.0)    # Flapping moment coefficient Nm/(m/s)
 
         # Motor parameters
         self.tau_m           = quad_params['tau_m']     # motor reponse time, seconds
-        self.motor_noise     = quad_params['motor_noise_std'] # noise added to the actual motor speed, rad/s / sqrt(Hz)
+        self.motor_noise     = quad_params.get('motor_noise_std', 0) # noise added to the actual motor speed, rad/s / sqrt(Hz)
+
+        # Lower level controller parameters 
+        self.k_w             = quad_params.get('k_w', 1)            # The body rate P gain        (for cmd_ctbr)
+        self.k_v             = quad_params.get('k_v', 10)           # The *world* velocity P gain (for cmd_vel)
+        self.kp_att          = quad_params.get('kp_att', 3000.0)    # The attitude P gain (for cmd_vel, cmd_acc, and cmd_ctatt)
+        self.kd_att          = quad_params.get('kd_att', 360.0)     # The attitude D gain (for cmd_vel, cmd_acc, and cmd_ctatt)
 
         # Additional constants.
         self.inertia = np.array([[self.Ixx, self.Ixy, self.Ixz],
@@ -128,11 +135,6 @@ class Multirotor(object):
         self.initial_state = initial_state
 
         self.control_abstraction = control_abstraction
-
-        self.k_w = 1                # The body rate P gain        (for cmd_ctbr)
-        self.k_v = 10               # The *world* velocity P gain (for cmd_vel)
-        self.kp_att = 544           # The attitude P gain (for cmd_vel, cmd_acc, and cmd_ctatt)
-        self.kd_att = 46.64         # The attitude D gain (for cmd_vel, cmd_acc, and cmd_ctatt)
 
         self.aero = aero
 
@@ -277,7 +279,7 @@ class Multirotor(object):
         local_airspeeds = body_airspeed_vector[:, np.newaxis] + Multirotor.hat_map(body_rates)@(self.rotor_geometry.T) 
 
         # Compute the thrust of each rotor, assuming that the rotors all point in the body z direction!
-        T = np.array([0, 0, self.k_eta])[:, np.newaxis]*rotor_speeds**2
+        T = np.array([0, 0, self.k_eta])[:, np.newaxis]*rotor_speeds**2 
         
         # Add in aero wrenches (if applicable)
         if self.aero:
@@ -287,6 +289,9 @@ class Multirotor(object):
             H = -rotor_speeds*(self.rotor_drag_matrix@local_airspeeds)
             # Pitching flapping moment acting at each propeller hub.
             M_flap = -self.k_flap*rotor_speeds*((Multirotor.hat_map(local_airspeeds.T).transpose(2, 0, 1))@np.array([0,0,1])).T
+            # Translational lift. 
+            T += np.array([0, 0, self.k_h])[:, np.newaxis]*(local_airspeeds[0, :]**2 + local_airspeeds[1, :]**2)
+
         else:
             D = np.zeros(3,)
             H = np.zeros((3,self.num_rotors))
