@@ -46,12 +46,19 @@ quad_params = {
     'k_m':   1.36e-07,          # yaw moment coefficient Nm/(rad/s)**2
     'k_d':   1.19e-04,          # rotor drag coefficient N/(rad*m/s**2) = kg/rad
     'k_z':   2.32e-04,          # induced inflow coefficient N/(rad*m/s**2) = kg/rad
+    'k_h':   3.39e-3,           # translational lift coefficient (N/(m/s)**2) = kg/m
     'k_flap': 0.0,              # Flapping moment coefficient Nm/(rad*m/s**2) = kg*m/rad
 
     # Motor properties
     'tau_m': 0.005,             # motor response time, seconds
     'rotor_speed_min': 0,       # rad/s
     'rotor_speed_max': 1500,    # rad/s
-    'motor_noise_std': 50,      # rad/s
+    'motor_noise_std': 0.0,     # rad/s
+
+    # Lower level controller properties (for higher level control abstractions)
+    'k_w': 1,               # The body rate P gain (for cmd_ctbr)
+    'k_v': 10,              # The *world* velocity P gain (for cmd_vel)
+    'kp_att': 544,          # The attitude P gain (for cmd_vel, cmd_acc, and cmd_ctatt)
+    'kd_att': 46.64,        # The attitude D gain (for cmd_vel, cmd_acc, and cmd_ctatt)
 
 }
