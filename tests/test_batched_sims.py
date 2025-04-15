@@ -11,6 +11,7 @@ from rotorpy.utils.trajgen_utils import generate_random_minsnap_traj
 from rotorpy.world import World
 
 def test_batched_operators():
+    np.random.seed(10)
     num_drones = 10
     device = torch.device("cpu")
     init_rotor_speed = 1788.53

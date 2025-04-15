@@ -28,6 +28,7 @@ class BatchedDynamicsParams:
         self.k_eta           = np.array([quad_params['k_eta'] for quad_params in quad_params_list])  # .unsqueeze(-1).to(device)     # thrust coeff, N/(rad/s)**2
         self.k_m           = np.array([quad_params['k_m'] for quad_params in quad_params_list])  # .unsqueeze(-1).to(device)
         self.k_flap           = torch.tensor([quad_params['k_flap'] for quad_params in quad_params_list]).unsqueeze(-1).to(device)   # Flapping moment coefficient Nm/(m/s)
+        self.k_h = torch.tensor([quad_params['k_h'] for quad_params in quad_params_list]).unsqueeze(-1).double().to(device)   # translational lift coeff N/(m/s)**2
 
         # Motor parameters
         self.tau_m           = torch.tensor([quad_params['tau_m'] for quad_params in quad_params_list], device=device).unsqueeze(-1)
@@ -65,6 +66,12 @@ class BatchedDynamicsParams:
         self.k_m = torch.from_numpy(self.k_m).unsqueeze(-1).to(device)
         self.rotor_dir = torch.from_numpy(self.rotor_dir_np).to(device)
         self.TM_to_f = torch.linalg.inv(self.f_to_TM)
+
+        # Low-Level Control Gains
+        self.k_w = torch.tensor([quad_params.get('k_w', 1) for quad_params in quad_params_list]).unsqueeze(-1).to(device)  # The body rate P gain (for cmd_ctbr)
+        self.k_v = torch.tensor([quad_params.get('k_v', 10) for quad_params in quad_params_list]).unsqueeze(-1).to(device)  # The body rate P gain (for cmd_ctbr)
+        self.kp_att = torch.tensor([quad_params.get('kp_att', 3000.0) for quad_params in quad_params_list]).unsqueeze(-1).to(device)
+        self.kd_att = torch.tensor([quad_params.get('kd_att', 360.0) for quad_params in quad_params_list]).unsqueeze(-1).to(device)
 
     # Update methods that require some additional computations
     def update_mass(self, idx, mass):
@@ -202,12 +209,6 @@ class BatchedMultirotor(object):
         # Set the initial state
         self.initial_states = initial_states
         self.control_abstraction = control_abstraction
-
-        # For now, keep these as scalars. But maybe later, we can parametrize them as well.
-        self.k_w = 1                # The body rate P gain        (for cmd_ctbr)
-        self.k_v = 10               # The *world* velocity P gain (for cmd_vel)
-        self.kp_att = 544           # The attitude P gain (for cmd_vel, cmd_acc, and cmd_ctatt)
-        self.kd_att = 46.64         # The attitude D gain (for cmd_vel, cmd_acc, and cmd_ctatt)
 
         self.aero = aero
 
@@ -366,12 +367,12 @@ class BatchedMultirotor(object):
             M_flap = BatchedMultirotor.hat_map(local_airspeeds.transpose(1, 2).reshape(num_drones*4, 3))
             M_flap = M_flap.permute(2, 0, 1).reshape(num_drones, 4, 3, 3).double()
             M_flap = M_flap@torch.tensor([0,0,1.0], device=self.device).double()
-            # print(f"k flap shape is {self.k_flap.shape}")
-            # print(f"rotor speeds shape is {rotor_speeds.shape}")
-            # print(f"M_flap shape is is {M_flap.shape}")
-            # print(f"intermediate shape is is {(-self.k_flap[idxs]*rotor_speeds).shape}")
-            # print(f"M_flap transpose shape  is {M_flap.transpose(-1, -2).shape}")
             M_flap = (-self.params.k_flap[idxs]*rotor_speeds).unsqueeze(1)*M_flap.transpose(-1, -2)
+
+            lift = torch.zeros(num_drones, 3, 1, device=self.device).double()
+            lift[:,2,:] = self.params.k_h[idxs]
+            lift = torch.bmm(lift, (local_airspeeds[:,0,:]**2 + local_airspeeds[:,1,:]**2).unsqueeze(1))
+            T += lift
         else:
             D = torch.zeros(num_drones, 3, device=self.device)
             H = torch.zeros((num_drones, 3, self.params.num_rotors), device=self.device)
@@ -415,7 +416,7 @@ class BatchedMultirotor(object):
             w_err = state['w'][idxs]- control['cmd_w'][idxs]
 
             # Computed commanded moment based on the attitude error and body rate error
-            wdot_cmd = -self.k_w*w_err
+            wdot_cmd = -self.params.k_w[idxs]*w_err
             cmd_moment = self.params.inertia[idxs]@wdot_cmd.unsqueeze(-1)
         elif self.control_abstraction == "cmd_vel":
             # The controller commands a velocity vector.
@@ -423,7 +424,7 @@ class BatchedMultirotor(object):
             v_err = state['v'][idxs] - control['cmd_v'][idxs]
 
             # Get desired acceleration based on P control of velocity error.
-            a_cmd = -self.k_v*v_err
+            a_cmd = -self.params.k_v[idxs]*v_err
 
             # Get desired force from this acceleration.
             F_des = self.params.mass[idxs]*(a_cmd + np.array([0, 0, self.params.g]))
@@ -446,7 +447,7 @@ class BatchedMultirotor(object):
 
             # Angular control; vector units of N*m.
             Iw = self.params.inertia[idxs] @ state['w'][idxs].unsqueeze(-1).double()
-            tmp = -self.kp_att * att_err - self.kd_att * state['w']
+            tmp = -self.params.kp_att[idxs] * att_err - self.params.kd_att[idxs] * state['w']
             cmd_moment = (self.params.inertia[idxs] @ tmp.unsqueeze(-1)).squeeze(-1) + torch.cross(state['w'][idxs], Iw.squeeze(-1), dim=-1)
         elif self.control_abstraction == "cmd_ctatt":
             cmd_thrust = control["cmd_thrust"][idxs]
@@ -455,7 +456,7 @@ class BatchedMultirotor(object):
             S_err = 0.5 * (R_des.transpose(-1, -2) @ R - R.transpose(-1, -2) @ R_des)
             att_err = torch.stack([-S_err[:, 1, 2], S_err[:, 0, 2], -S_err[:, 0, 1]], dim=-1)
             Iw = self.params.inertia[idxs] @ state['w'][idxs].unsqueeze(-1).double()
-            tmp = -self.kp_att * att_err - self.kd_att * state['w']
+            tmp = -self.params.kp_att[idxs] * att_err - self.params.kd_att[idxs] * state['w']
             cmd_moment = (self.params.inertia[idxs] @ tmp.unsqueeze(-1)).squeeze(-1) + torch.cross(state['w'][idxs], Iw.squeeze(-1), dim=-1)
         elif self.control_abstraction == "cmd_acc":
             F_des = control['cmd_acc'][idxs]*self.params.mass[idxs]
@@ -477,7 +478,7 @@ class BatchedMultirotor(object):
 
             # Angular control; vector units of N*m.
             Iw = self.params.inertia[idxs] @ state['w'][idxs].unsqueeze(-1).double()
-            tmp = -self.kp_att * att_err - self.kd_att * state['w']
+            tmp = -self.params.kp_att[idxs] * att_err - self.params.kd_att[idxs] * state['w']
             cmd_moment = (self.params.inertia[idxs] @ tmp.unsqueeze(-1)).squeeze(-1) + torch.cross(state['w'][idxs], Iw.squeeze(-1), dim=-1)
         else:
             raise ValueError("Invalid control abstraction selected. Options are: cmd_motor_speeds, cmd_motor_thrusts, cmd_ctbm, cmd_ctbr, cmd_ctatt, cmd_vel, cmd_acc")
