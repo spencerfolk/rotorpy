@@ -9,13 +9,12 @@ import copy
 import os
 
 from rotorpy.trajectories.minsnap import MinSnap, BatchedMinSnap
-from rotorpy.vehicles.batched_multirotor import BatchedMultirotor, BatchedDynamicsParams
-from rotorpy.vehicles.multirotor import Multirotor
+from rotorpy.vehicles.multirotor import Multirotor, BatchedMultirotor, BatchedDynamicsParams
 from rotorpy.controllers.quadrotor_control import BatchedSE3Control, SE3Control
 from rotorpy.vehicles.crazyflie_params import quad_params
 from rotorpy.utils.trajgen_utils import sample_waypoints
 from rotorpy.world import World
-from rotorpy.wind.default_winds import BatchedNoWind
+from rotorpy.wind.default_winds import BatchedNoWind, NoWind
 from rotorpy.batch_simulate import simulate_batch
 from rotorpy.simulate import simulate
 from rotorpy.sensors.imu import Imu
@@ -160,7 +159,7 @@ def main():
         vehicle = BatchedMultirotor(batch_params, batch_size, initial_states, device=device, integrator=integrator)
         t_fs = np.array([trajectory.t_keyframes[-1] for trajectory in trajectories])
         batched_traj = BatchedMinSnap(trajectories, device=device)
-        wind_profile = NoWind(batch_size)
+        wind_profile = BatchedNoWind(batch_size)
 
         start_time = time.time()
         results = simulate_batch(world, initial_states, vehicle, controller, batched_traj, wind_profile, t_fs, sim_dt, 0.25, print_fps=False)

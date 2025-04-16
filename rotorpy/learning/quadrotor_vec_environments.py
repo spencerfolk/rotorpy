@@ -9,7 +9,7 @@ import time
 from stable_baselines3.common.vec_env.base_vec_env import VecEnvIndices
 
 from rotorpy.world import World
-from rotorpy.vehicles.batched_multirotor import BatchedMultirotor, BatchedDynamicsParams
+from rotorpy.vehicles.multirotor import BatchedDynamicsParams, BatchedMultirotor
 from rotorpy.vehicles.crazyflie_params import quad_params as crazyflie_params
 from rotorpy.learning.quadrotor_reward_functions import vec_hover_reward, vec_hover_reward_positive
 from rotorpy.utils.shapes import Quadrotor

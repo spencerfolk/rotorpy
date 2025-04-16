@@ -1,4 +1,4 @@
-from rotorpy.vehicles.batched_multirotor import BatchedDynamicsParams
+from rotorpy.vehicles.multirotor import BatchedDynamicsParams
 from rotorpy.vehicles.crazyflie_params import quad_params as cf_params
 import numpy as np
 from typing import Tuple, List, Dict

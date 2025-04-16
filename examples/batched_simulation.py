@@ -4,8 +4,7 @@ import time
 import matplotlib.pyplot as plt
 
 from rotorpy.trajectories.minsnap import MinSnap, BatchedMinSnap
-from rotorpy.vehicles.batched_multirotor import BatchedMultirotor, BatchedDynamicsParams
-from rotorpy.vehicles.multirotor import Multirotor
+from rotorpy.vehicles.multirotor import Multirotor, BatchedDynamicsParams, BatchedMultirotor
 from rotorpy.controllers.quadrotor_control import BatchedSE3Control, SE3Control
 from rotorpy.vehicles.crazyflie_params import quad_params as cf_quad_params
 from rotorpy.vehicles.hummingbird_params import quad_params as hb_quad_params
