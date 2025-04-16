@@ -15,8 +15,7 @@ from rotorpy.vehicles.crazyflie_params import quad_params
 from rotorpy.utils.trajgen_utils import sample_waypoints
 from rotorpy.world import World
 from rotorpy.wind.default_winds import BatchedNoWind, NoWind
-from rotorpy.batch_simulate import simulate_batch
-from rotorpy.simulate import simulate
+from rotorpy.simulate import simulate, simulate_batch
 from rotorpy.sensors.imu import Imu
 from rotorpy.sensors.external_mocap import MotionCapture
 from rotorpy.estimators.nullestimator import NullEstimator
