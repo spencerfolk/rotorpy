@@ -522,47 +522,50 @@ class Multirotor(object):
         return state
 
 
-class BatchedDynamicsParams:
-    def __init__(self, quad_params_list, num_drones, device):
-        assert len(quad_params_list) == num_drones
+class BatchedMultirotorParams:
+    """ 
+    A batched version of the multirotor params. 
+    """
+    def __init__(self, multirotor_params_list, num_drones, device):
+        assert len(multirotor_params_list) == num_drones
         self.num_drones = num_drones
         self.device = device
-        self.mass = torch.tensor([quad_params['mass'] for quad_params in quad_params_list]).unsqueeze(-1).to(device) # kg
+        self.mass = torch.tensor([multirotor_params['mass'] for multirotor_params in multirotor_params_list]).unsqueeze(-1).to(device) # kg
 
-        self.num_rotors = quad_params_list[0]["num_rotors"]
-        for quad_params in quad_params_list:
-            assert quad_params["num_rotors"] == self.num_rotors
+        self.num_rotors = multirotor_params_list[0]["num_rotors"]
+        for multirotor_params in multirotor_params_list:
+            assert multirotor_params["num_rotors"] == self.num_rotors
 
-        self.rotor_pos = [quad_params["rotor_pos"] for quad_params in quad_params_list]
+        self.rotor_pos = [multirotor_params["rotor_pos"] for multirotor_params in multirotor_params_list]
 
-        self.rotor_dir_np       = np.array([qp['rotor_directions'] for qp in quad_params_list])
+        self.rotor_dir_np       = np.array([qp['rotor_directions'] for qp in multirotor_params_list])
 
         self.extract_geometry()
 
         # Rotor parameters
-        self.rotor_speed_min = torch.tensor([quad_params['rotor_speed_min'] for quad_params in quad_params_list]).unsqueeze(-1).to(device) # rad/s
-        self.rotor_speed_max = torch.tensor([quad_params['rotor_speed_max'] for quad_params in quad_params_list]).unsqueeze(-1).to(device) # rad/s
+        self.rotor_speed_min = torch.tensor([multirotor_params['rotor_speed_min'] for multirotor_params in multirotor_params_list]).unsqueeze(-1).to(device) # rad/s
+        self.rotor_speed_max = torch.tensor([multirotor_params['rotor_speed_max'] for multirotor_params in multirotor_params_list]).unsqueeze(-1).to(device) # rad/s
 
-        self.k_eta           = np.array([quad_params['k_eta'] for quad_params in quad_params_list])  # .unsqueeze(-1).to(device)     # thrust coeff, N/(rad/s)**2
-        self.k_m           = np.array([quad_params['k_m'] for quad_params in quad_params_list])  # .unsqueeze(-1).to(device)
-        self.k_flap           = torch.tensor([quad_params['k_flap'] for quad_params in quad_params_list]).unsqueeze(-1).to(device)   # Flapping moment coefficient Nm/(m/s)
-        self.k_h = torch.tensor([quad_params['k_h'] for quad_params in quad_params_list]).unsqueeze(-1).double().to(device)   # translational lift coeff N/(m/s)**2
+        self.k_eta = np.array([multirotor_params['k_eta'] for multirotor_params in multirotor_params_list])  # .unsqueeze(-1).to(device)     # thrust coeff, N/(rad/s)**2
+        self.k_m = np.array([multirotor_params['k_m'] for multirotor_params in multirotor_params_list])  # .unsqueeze(-1).to(device)
+        self.k_flap = torch.tensor([multirotor_params['k_flap'] for multirotor_params in multirotor_params_list]).unsqueeze(-1).to(device)   # Flapping moment coefficient Nm/(m/s)
+        self.k_h = torch.tensor([multirotor_params['k_h'] for multirotor_params in multirotor_params_list]).unsqueeze(-1).double().to(device)   # translational lift coeff N/(m/s)**2
 
         # Motor parameters
-        self.tau_m           = torch.tensor([quad_params['tau_m'] for quad_params in quad_params_list], device=device).unsqueeze(-1)
-        self.motor_noise     = torch.tensor([quad_params['motor_noise_std'] for quad_params in quad_params_list], device=device).unsqueeze(-1) # noise added to the actual motor speed, rad/s / sqrt(Hz)
+        self.tau_m           = torch.tensor([multirotor_params['tau_m'] for multirotor_params in multirotor_params_list], device=device).unsqueeze(-1)
+        self.motor_noise     = torch.tensor([multirotor_params['motor_noise_std'] for multirotor_params in multirotor_params_list], device=device).unsqueeze(-1) # noise added to the actual motor speed, rad/s / sqrt(Hz)
 
         # Additional constants.
         self.inertia = torch.from_numpy(np.array([[[qp["Ixx"], qp["Ixy"], qp["Ixz"]],
                                                    [qp["Ixy"], qp["Iyy"], qp["Iyz"]],
-                                                   [qp["Ixz"], qp["Iyz"], qp["Izz"]]] for qp in quad_params_list])).double().to(device)
+                                                   [qp["Ixz"], qp["Iyz"], qp["Izz"]]] for qp in multirotor_params_list])).double().to(device)
         self.rotor_drag_matrix = torch.tensor([[[qp["k_d"],   0,                 0],
                                                 [0,          qp["k_d"],          0],
-                                                [0,          0,          qp["k_z"]]] for qp in quad_params_list], device=device).double()
+                                                [0,          0,          qp["k_z"]]] for qp in multirotor_params_list], device=device).double()
 
         self.drag_matrix = torch.tensor([[[qp["c_Dx"],   0,                 0],
                                           [0,          qp["c_Dy"],          0],
-                                          [0,          0,          qp["c_Dz"]]] for qp in quad_params_list], device=device).double()
+                                          [0,          0,          qp["c_Dz"]]] for qp in multirotor_params_list], device=device).double()
 
         # keep this the same across drones.
         self.g = 9.81 # m/s^2
@@ -586,17 +589,17 @@ class BatchedDynamicsParams:
         self.TM_to_f = torch.linalg.inv(self.f_to_TM)
 
         # Low-Level Control Gains
-        self.k_w = torch.tensor([quad_params.get('k_w', 1) for quad_params in quad_params_list]).unsqueeze(-1).to(device)  # The body rate P gain (for cmd_ctbr)
-        self.k_v = torch.tensor([quad_params.get('k_v', 10) for quad_params in quad_params_list]).unsqueeze(-1).to(device)  # The body rate P gain (for cmd_ctbr)
-        self.kp_att = torch.tensor([quad_params.get('kp_att', 3000.0) for quad_params in quad_params_list]).unsqueeze(-1).to(device)
-        self.kd_att = torch.tensor([quad_params.get('kd_att', 360.0) for quad_params in quad_params_list]).unsqueeze(-1).to(device)
+        self.k_w = torch.tensor([multirotor_params.get('k_w', 1) for multirotor_params in multirotor_params_list]).unsqueeze(-1).to(device)  # The body rate P gain (for cmd_ctbr)
+        self.k_v = torch.tensor([multirotor_params.get('k_v', 10) for multirotor_params in multirotor_params_list]).unsqueeze(-1).to(device)  # The body rate P gain (for cmd_ctbr)
+        self.kp_att = torch.tensor([multirotor_params.get('kp_att', 3000.0) for multirotor_params in multirotor_params_list]).unsqueeze(-1).to(device)
+        self.kd_att = torch.tensor([multirotor_params.get('kd_att', 360.0) for multirotor_params in multirotor_params_list]).unsqueeze(-1).to(device)
 
     # Update methods that require some additional computations
     def update_mass(self, idx, mass):
         self.mass[idx] = mass
         self.weight[idx,-1] = -mass * self.g
 
-    def update_thrust_and_rotor_params(self, idx, k_eta: float=None, k_m:float =None, rotor_pos: dict=None):
+    def update_thrust_and_rotor_params(self, idx, k_eta = None, k_m = None, rotor_pos = None):
         if k_eta is not None:
             self.k_eta[idx] = k_eta
         if k_m is not None:
@@ -643,7 +646,6 @@ class BatchedDynamicsParams:
         wrenches acting on the rigid body.
         The rotor_geometry is an array of length (n,3), where n is the number of rotors.
         Each row corresponds to the position vector of the rotor relative to the CoM.
-        Currently, each drone within a batch must have the same parameters, so we are not iterating over num_drones.
         """
 
         geoms = []
@@ -666,7 +668,7 @@ class BatchedMultirotor(object):
     states: [position, velocity, attitude, body rates, wind, rotor speeds]
 
     Parameters:
-        quad_params: a dictionary containing relevant physical parameters for the multirotor.
+        batched_params: batched dictionary containing relevant physical parameters for the multirotor.
         initial_state: the initial state of the vehicle.
         control_abstraction: the appropriate control abstraction that is used by the controller, options are...
                                 'cmd_motor_speeds': the controller directly commands motor speeds.
@@ -680,7 +682,7 @@ class BatchedMultirotor(object):
         integrator: str, "dopri5" or "rk4", which are adaptive or fixed step size integrators. "rk4" will be faster, but potentially less accurate.
     """
 
-    def __init__(self, batched_params: BatchedDynamicsParams,
+    def __init__(self, batched_params,
                  num_drones,
                  initial_states,
                  device,

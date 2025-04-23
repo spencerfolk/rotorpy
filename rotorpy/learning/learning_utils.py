@@ -1,7 +1,6 @@
-from rotorpy.vehicles.multirotor import BatchedDynamicsParams
+from rotorpy.vehicles.multirotor import BatchedMultirotorParams
 from rotorpy.vehicles.crazyflie_params import quad_params as cf_params
 import numpy as np
-from typing import Tuple, List, Dict
 
 crazyflie_randomizations = {
     "mass": [0.02, 0.035],
@@ -9,23 +8,36 @@ crazyflie_randomizations = {
     "tau_m": [0.004, 0.006]
 }
 
-def generate_random_dynamics_params(num_drones: int,
+def generate_random_vehicle_params(num_drones,
                                     device,
-                                    nominal_params: Dict = cf_params,
-                                    randomization_ranges: Dict = crazyflie_randomizations):
-    batch_params = BatchedDynamicsParams([nominal_params for _ in range(num_drones)], num_drones, device)
+                                    nominal_params = cf_params,
+                                    randomization_ranges = crazyflie_randomizations):
+    """ 
+    Generate random vehicle params. 
+    Inputs:
+        num_drones: the number of drones to generate params for. 
+        nominal_params: the nominal parameters for the drone, i.e. the center of each sampling distribution.
+        randomization_ranges: the range with which parameters are selected. 
+    """
+
+    batch_params = BatchedMultirotorParams([nominal_params for _ in range(num_drones)], num_drones, device)
     for idx in range(num_drones):
-        update_dynamics_params(idx,
-                               randomization_ranges,
-                               batch_params)
+        update_vehicle_params(idx,
+                              randomization_ranges,
+                              batch_params)
     return batch_params
 
-def generate_random_rotor_pos(num_rotors, pos_range: Tuple):
-    pass
+def update_vehicle_params(idx,
+                          ranges,
+                          params_obj):
+    """
+    Update vehicle parameters. 
+    Inputs:
+        idx: the particular idx of the drone. 
+        ranges: the range of values to sample from. 
+        prams_obj: the object (type BatchedMultirotorParams) to modify.
 
-def update_dynamics_params(idx: int,
-                           ranges: dict,
-                           params_obj: BatchedDynamicsParams):
+    """
     min_k_eta = 0
     if "mass" in ranges:
         mass_val = np.random.uniform(ranges["mass"][0], ranges["mass"][1])
@@ -54,3 +66,5 @@ def update_dynamics_params(idx: int,
     if "motor_noise" in ranges:
         motor_noise = np.random.uniform(ranges["motor_noise"][0], ranges["motor_noise"][1])
         params_obj.motor_noise[idx] = motor_noise
+
+    return 
