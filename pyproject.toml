@@ -37,7 +37,8 @@ dependencies = [
 
 [project.optional-dependencies]
 learning = [
-    'stable_baselines3'
+    'stable_baselines3',
+    'tensorboard',
 ]
 dev = [
     'pytest',
