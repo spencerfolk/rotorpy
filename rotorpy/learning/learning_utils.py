@@ -3,9 +3,8 @@ from rotorpy.vehicles.crazyflie_params import quad_params as cf_params
 import numpy as np
 
 crazyflie_randomizations = {
-    "mass": [0.02, 0.035],
-    "k_eta": [2.3e-8, 7.0e-8],
-    "tau_m": [0.004, 0.006]
+    "mass": [0.027, 0.033],
+    "k_eta": [2.1e-8, 2.5e-8],
 }
 
 def generate_random_vehicle_params(num_drones,

@@ -6,7 +6,7 @@ from rotorpy.vehicles.crazyflie_params import quad_params  # Import quad params 
 
 # Import the QuadrotorEnv gymnasium environment using the following command.
 from rotorpy.learning.quadrotor_environments import QuadrotorEnv, make_default_vec_env
-from rotorpy.learning.quadrotor_reward_functions import vec_hover_reward, vec_hover_reward_positive
+from rotorpy.learning.quadrotor_reward_functions import vec_hover_reward
 from rotorpy.learning.learning_utils import *
 
 
@@ -28,26 +28,35 @@ from stable_baselines3.ppo.policies import MlpPolicy                # The policy
 from stable_baselines3.common.vec_env import VecMonitor
 from stable_baselines3.common.callbacks import EvalCallback, CheckpointCallback, CallbackList
 
-control_mode = "cmd_ctatt"
+# This script shows a simple example of training a quadrotor to hover at the origin.
+
+# The control abstraction we will use is cmd_ctatt, for which the actions are thrusts and commanded attitude
+control_mode = "cmd_ctbr"
+
+# We will use 512 parallel environments 
 num_envs = 512
+
 device = torch.device("cpu")
+
+# Generate random vehicle params for the quadrotors.
 random_quad_params = generate_random_vehicle_params(num_envs, device, quad_params, crazyflie_randomizations)
+
 env = make_default_vec_env(num_envs,
                            random_quad_params,
                            control_mode,
                            device,
                            render_mode="None",
-                           reward_fn=vec_hover_reward_positive)
+                           reward_fn=vec_hover_reward)
 env.reset_options["params"] = "random"
-env.reset_options["vel_bound"] = 0.2
+env.reset_options["vel_bound"] = 0.5
 wrapped_env = VecMonitor(env)
 
 start_time = datetime.now()
 
-eval_env = VecMonitor(make_default_vec_env(10, quad_params, control_mode, device, render_mode="None", reward_fn=vec_hover_reward_positive))
+eval_env = VecMonitor(make_default_vec_env(10, quad_params, control_mode, device, render_mode="3D", reward_fn=vec_hover_reward))
 checkpoint_callback = CheckpointCallback(save_freq=max(50000//num_envs, 1), save_path=f"{models_dir}/PPO/hover_{control_mode}_{start_time.strftime('%b-%d_%H-%M')}/",
                                          name_prefix='hover')
-eval_callback = EvalCallback(eval_env, eval_freq=1e6//num_envs, deterministic=True, render=False)
+eval_callback = EvalCallback(eval_env, eval_freq=1e6//num_envs, deterministic=False, render=False)
 model = PPO(MlpPolicy,
             wrapped_env,
             n_steps=32,
