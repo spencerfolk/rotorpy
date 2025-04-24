@@ -69,7 +69,7 @@ def main():
     hb_quad_params["motor_noise_std"] = 0
 
     # control_abstraction = "cmd_motor_speeds"  # the default abstraction
-    control_abstraction = "cmd_motor_thrusts"
+    control_abstraction = "cmd_ctatt"
 
     # We'll simulate half crazyflies, half hummingbirds
     all_quad_params = [cf_quad_params]*(num_drones//2) + [hb_quad_params]*(num_drones//2)

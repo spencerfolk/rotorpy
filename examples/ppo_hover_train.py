@@ -31,7 +31,7 @@ from stable_baselines3.common.callbacks import EvalCallback, CheckpointCallback,
 # This script shows a simple example of training a quadrotor to hover at the origin.
 
 # The control abstraction we will use is cmd_ctatt, for which the actions are thrusts and commanded attitude
-control_mode = "cmd_ctbr"
+control_mode = "cmd_ctatt"
 
 # We will use 512 parallel environments 
 num_envs = 512
@@ -56,7 +56,7 @@ start_time = datetime.now()
 eval_env = VecMonitor(make_default_vec_env(10, quad_params, control_mode, device, render_mode="3D", reward_fn=vec_hover_reward))
 checkpoint_callback = CheckpointCallback(save_freq=max(50000//num_envs, 1), save_path=f"{models_dir}/PPO/hover_{control_mode}_{start_time.strftime('%b-%d_%H-%M')}/",
                                          name_prefix='hover')
-eval_callback = EvalCallback(eval_env, eval_freq=1e6//num_envs, deterministic=False, render=False)
+eval_callback = EvalCallback(eval_env, eval_freq=1e6//num_envs, deterministic=True, render=False)
 model = PPO(MlpPolicy,
             wrapped_env,
             n_steps=32,

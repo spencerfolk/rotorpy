@@ -955,11 +955,11 @@ class BatchedMultirotor(object):
         elif self.control_abstraction == "cmd_ctatt":
             cmd_thrust = control["cmd_thrust"][idxs]
             R = roma.unitquat_to_rotmat(state['q'][idxs]).double()
-            R_des = roma.unitquat_to_rotmat(control["cmd_q"]).double()
+            R_des = roma.unitquat_to_rotmat(control["cmd_q"][idxs]).double()
             S_err = 0.5 * (R_des.transpose(-1, -2) @ R - R.transpose(-1, -2) @ R_des)
             att_err = torch.stack([-S_err[:, 1, 2], S_err[:, 0, 2], -S_err[:, 0, 1]], dim=-1)
             Iw = self.params.inertia[idxs] @ state['w'][idxs].unsqueeze(-1).double()
-            tmp = -self.params.kp_att[idxs] * att_err - self.params.kd_att[idxs] * state['w']
+            tmp = -self.params.kp_att[idxs] * att_err - self.params.kd_att[idxs] * state['w'][idxs]
             cmd_moment = (self.params.inertia[idxs] @ tmp.unsqueeze(-1)).squeeze(-1) + torch.cross(state['w'][idxs],
                                                                                                    Iw.squeeze(-1),
                                                                                                    dim=-1)
