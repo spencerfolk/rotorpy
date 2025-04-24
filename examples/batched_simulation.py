@@ -4,7 +4,7 @@ import time
 import matplotlib.pyplot as plt
 
 from rotorpy.trajectories.minsnap import MinSnap, BatchedMinSnap
-from rotorpy.vehicles.multirotor import Multirotor, BatchedDynamicsParams, BatchedMultirotor
+from rotorpy.vehicles.multirotor import Multirotor, BatchedMultirotorParams, BatchedMultirotor
 from rotorpy.controllers.quadrotor_control import BatchedSE3Control, SE3Control
 from rotorpy.vehicles.crazyflie_params import quad_params as cf_quad_params
 from rotorpy.vehicles.hummingbird_params import quad_params as hb_quad_params
@@ -88,7 +88,7 @@ def main():
     # Define this object which contains dynamics params for each of the drones.
     # If the batch size is large, this can save memory by sharing the dynamics params across the controller and
     # multirotor object.
-    batch_params = BatchedDynamicsParams(all_quad_params, num_drones, device)
+    batch_params = BatchedMultirotorParams(all_quad_params, num_drones, device)
 
     # Define a batched controller object which lets us compute control inputs for all drones in the batch at the
     # same time. Note that currently, all drones in the batch must share the same quad_params.

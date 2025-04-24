@@ -34,7 +34,7 @@ def run_gym_environment(control_abstraction, num_drones):
         n_u = 3
     else:
         n_u = 4
-    action = np.random.uniform(-1, 1, n_u)
+    action = np.random.uniform(-1, 1, (num_drones, n_u))
 
     # Step forward in the environment
     observation, reward, terminated, truncated = env.step(action)

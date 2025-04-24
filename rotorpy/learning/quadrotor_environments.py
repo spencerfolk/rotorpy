@@ -21,9 +21,8 @@ from gymnasium import spaces
 from copy import deepcopy
 
 DEFAULT_RESET_OPTIONS = {'initial_states': 'random', 'pos_bound': 2, 'vel_bound': 0,
-                         "params": "random", 
-                         "randomization_ranges": crazyflie_randomizations,
-                         "trajectory": "fixed"}
+                         "params": "fixed", 
+                         "randomization_ranges": crazyflie_randomizations}
 
 def _minmax_scale(x, min_values, max_values):
     '''
@@ -75,7 +74,7 @@ class QuadrotorEnv(VecEnv):
                  initial_states,                        # The initial states of the drones.
                  control_mode = 'cmd_vel',              # Control abstraction, see metadata["control_modes"] for a list.
                  reward_fn = vec_hover_reward,          # Reward function, must output the same dim as the number of drones. 
-                 quad_params = crazyflie_params,        # Vehicle params for the quadrotor environment. Can be BatchedDynamicParams. 
+                 quad_params = crazyflie_params,        # Vehicle params for the quadrotor environment. Can be BatchedMultirotorParams. 
                  device = torch.device('cpu'),          # Device to load environment onto. 
                  max_time = 10,                         # Maximum time to run the simulation for in a single session.
                  wind_profile = None,                   # wind profile object, if none is supplied it will choose no wind.
@@ -406,9 +405,9 @@ class QuadrotorEnv(VecEnv):
             cmd_thrust = _minmax_scale(action[...,0].reshape(-1, 1), self.quad_params.num_rotors * self.min_thrust, self.quad_params.num_rotors * self.max_thrust)
 
             # Scale the moments
-            cmd_roll_moment = _minmax_scale(action[...,1], -self.max_roll_moment, self.max_roll_moment)
-            cmd_pitch_moment = _minmax_scale(action[...,2], -self.max_pitch_moment, self.max_pitch_moment)
-            cmd_yaw_moment = _minmax_scale(action[...,3], -self.max_yaw_moment, self.max_yaw_moment)
+            cmd_roll_moment = _minmax_scale(action[...,1].reshape(-1, 1), -self.max_roll_moment, self.max_roll_moment)
+            cmd_pitch_moment = _minmax_scale(action[...,2].reshape(-1, 1), -self.max_pitch_moment, self.max_pitch_moment)
+            cmd_yaw_moment = _minmax_scale(action[...,3].reshape(-1, 1), -self.max_yaw_moment, self.max_yaw_moment)
 
             control_dict['cmd_thrust'] = cmd_thrust
             control_dict['cmd_moment'] = np.hstack([cmd_roll_moment, cmd_pitch_moment, cmd_yaw_moment])

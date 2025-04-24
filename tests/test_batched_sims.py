@@ -2,7 +2,7 @@ import numpy as np
 import torch
 
 from rotorpy.trajectories.minsnap import BatchedMinSnap
-from rotorpy.vehicles.multirotor import Multirotor, BatchedDynamicsParams, BatchedMultirotor
+from rotorpy.vehicles.multirotor import Multirotor, BatchedMultirotorParams, BatchedMultirotor
 from rotorpy.controllers.quadrotor_control import BatchedSE3Control, SE3Control
 from rotorpy.vehicles.crazyflie_params import quad_params as cf_quad_params
 from rotorpy.vehicles.hummingbird_params import quad_params as hb_quad_params
@@ -39,7 +39,7 @@ def test_batched_operators():
         for key in batch_flat_output.keys():
             assert np.all(np.abs(batch_flat_output[key][j].cpu().numpy() - seq_flat_output[key]) < 1e-3)
 
-    batch_params = BatchedDynamicsParams(all_quad_params, num_drones, device)
+    batch_params = BatchedMultirotorParams(all_quad_params, num_drones, device)
     batched_ctrlr = BatchedSE3Control(batch_params, num_drones, device)
     batch_control_inputs = batched_ctrlr.update(0, batch_state, batch_flat_output)
 
@@ -53,11 +53,6 @@ def test_batched_operators():
         flat_output = {key: batch_flat_output[key][j].cpu().numpy() for key in batch_flat_output.keys()}
         seq_control_input = single_ctrlr.update(0, seq_state, flat_output)
         for key in batch_control_inputs.keys():
-            # print(key)
-            # print(batch_control_inputs[key][j].cpu().numpy())
-            # print("-")
-            # print(seq_control_input[key])
-            # print("--------------")
             assert np.all(np.abs(batch_control_inputs[key][j].cpu().numpy() - seq_control_input[key]) < 1e-3)
 
     for abstraction in control_abstractions:
@@ -73,13 +68,9 @@ def test_batched_operators():
             seq_next_state = single_multirotor.step(seq_state, seq_control_input, 0.01)
             for key in batch_next_state.keys():
                 # since rotor speeds are large, we need a higher tolerance here.
-                # Or, something is just wrong, idk. But it's close enough.
                 if key == "rotor_speeds":
                     assert np.all(np.abs(batch_next_state[key][j].cpu().numpy() - seq_next_state[key]) < 1)
                 else:
-                    # print(batch_next_state[key][j].cpu().numpy())
-                    # print(seq_next_state[key])
-                    # print("--------------")
                     assert np.all(np.abs(batch_next_state[key][j].cpu().numpy() - seq_next_state[key]) < 2e-2)
 
 

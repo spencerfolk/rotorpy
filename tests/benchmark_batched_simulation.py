@@ -9,7 +9,7 @@ import copy
 import os
 
 from rotorpy.trajectories.minsnap import MinSnap, BatchedMinSnap
-from rotorpy.vehicles.multirotor import Multirotor, BatchedMultirotor, BatchedDynamicsParams
+from rotorpy.vehicles.multirotor import Multirotor, BatchedMultirotor, BatchedMultirotorParams
 from rotorpy.controllers.quadrotor_control import BatchedSE3Control, SE3Control
 from rotorpy.vehicles.crazyflie_params import quad_params
 from rotorpy.utils.trajgen_utils import sample_waypoints
@@ -151,7 +151,7 @@ def main():
     # Get CPU FPS
     for batch_size in batch_sizes:
         all_quad_params = [dict(quad_params) for _ in range(batch_size)]
-        batch_params = BatchedDynamicsParams(all_quad_params, batch_size, device)
+        batch_params = BatchedMultirotorParams(all_quad_params, batch_size, device)
         trajectories = [copy.deepcopy(traj) for _ in range(batch_size)]  # keep trajectory constant to eliminate one variable
         initial_states = get_batch_initial_states(batch_size, device)
         controller = BatchedSE3Control(batch_params, batch_size, device=device)
@@ -176,7 +176,7 @@ def main():
         device = torch.device("cuda:0")
         for batch_size in batch_sizes:
             all_quad_params = [dict(quad_params) for _ in range(batch_size)]
-            batch_params = BatchedDynamicsParams(all_quad_params, batch_size, device)
+            batch_params = BatchedMultirotorParams(all_quad_params, batch_size, device)
             trajectories = [copy.deepcopy(traj) for _ in range(batch_size)]  # keep trajectory constant to eliminate one variable
             initial_states = get_batch_initial_states(batch_size, device)
             controller = BatchedSE3Control(batch_params, batch_size, device=device)
