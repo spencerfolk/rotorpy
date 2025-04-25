@@ -65,7 +65,7 @@ class QuadrotorEnv(VecEnv):
         ax: for plotting purposes, you can supply an axis object that the quadrotor will visualize on.
         color: choose the color of the quadrotor. If none, it will randomly select a color.
     """
-    metadata = {"render_modes": ["None", "3D", "console"],
+    metadata = {"render_modes": ["None", "3D", "console", "debug"],
                 "render_fps": 30,
                 "control_modes": ['cmd_motor_speeds', 'cmd_motor_thrusts', 'cmd_ctbr', 'cmd_ctbm', 'cmd_vel', 'cmd_ctatt']}
 
@@ -244,7 +244,7 @@ class QuadrotorEnv(VecEnv):
             self.max_pitch_moment[env_idx] = self.max_thrust[env_idx] * np.abs(self.quad_params.rotor_pos[env_idx]['r1'][0])
             self.max_yaw_moment = self.quad_params.k_m[env_idx].cpu().numpy() * self.rotor_speed_max**2
 
-        if env_idx < min(self.num_envs, 5) and self.render_mode[0] == "eval":
+        if env_idx < min(self.num_envs, 5) and self.render_mode[0] == "debug":
             if self.counts[env_idx] % 10 == 0 and self.counts[env_idx] != 0:
                 print(f"Saving plot for {env_idx}")
                 fig, ax  = plt.subplots(1, 3)
@@ -366,7 +366,7 @@ class QuadrotorEnv(VecEnv):
         # Determine whether or not the session should terminate.
         time_done = self.t >= self.max_time
         dones = np.logical_or(oob, time_done)
-        if self.render_mode[0] == "eval":
+        if self.render_mode[0] == "debug":
             print(f"time {self.t}, dones = {dones}")
 
         # Now compute the reward based on the current state
@@ -445,31 +445,31 @@ class QuadrotorEnv(VecEnv):
 
     def _is_out_of_bounds(self):
         se = torch.any(torch.abs(self.vehicle_states['v']) > 100, dim=-1)
-        if self.render_mode[0] == "eval":
+        if self.render_mode[0] == "debug":
             print(se)
         se = torch.logical_or(se, torch.any(torch.abs(self.vehicle_states['w']) > 100, dim=-1))
-        if self.render_mode[0] == "eval":
+        if self.render_mode[0] == "debug":
             print(se)
         se = torch.logical_or(se,
                               torch.logical_or(
                                   self.vehicle_states['x'][:,0] < self.world.world['bounds']['extents'][0],
                                   self.vehicle_states['x'][:,0] > self.world.world['bounds']['extents'][1]
                               ))
-        if self.render_mode[0] == "eval":
+        if self.render_mode[0] == "debug":
             print(se)
         se = torch.logical_or(se,
                               torch.logical_or(
                                   self.vehicle_states['x'][:,1] < self.world.world['bounds']['extents'][2],
                                   self.vehicle_states['x'][:,1] > self.world.world['bounds']['extents'][3]
                               ))
-        if self.render_mode[0] == "eval":
+        if self.render_mode[0] == "debug":
             print(se)
         se = torch.logical_or(se,
                               torch.logical_or(
                                   self.vehicle_states['x'][:,2] < self.world.world['bounds']['extents'][4],
                                   self.vehicle_states['x'][:,2] > self.world.world['bounds']['extents'][5]
                               ))
-        if self.render_mode[0] == "eval":
+        if self.render_mode[0] == "debug":
             print(se)
             print("----------")
         return se.cpu().numpy()
