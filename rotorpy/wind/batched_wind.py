@@ -6,7 +6,8 @@ class BatchedWind(object):
     Constructs a batch of wind profiles for multiple vehicles. Each vehicle has its own wind profile. 
     This is a brute force way to interface with RotorPy's batched simulation environment. 
     It's likely to be inefficient, but it's a start. 
-    If you want to speed things up, you might want to consider implementing a batched/vectorized version of your trajectories.
+    If you want to speed things up, you might want to consider implementing a batched/vectorized version of your wind.
+    (see default_wind.py for examples of Batched Wind objects)
     """
 
     def __init__(self, wind_profiles, device='cpu'):

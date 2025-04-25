@@ -22,7 +22,7 @@ from rotorpy.estimators.nullestimator import NullEstimator
 
 INIT_ROTOR_SPEED = 1788.53
 
-
+# Utilty functions to generate initial states for batch and sequential simulations.
 def get_batch_initial_states(num_drones, device):
     x0 = {'x': torch.zeros(num_drones,3, device=device).double(),
           'v': torch.zeros(num_drones, 3, device=device).double(),
@@ -31,7 +31,6 @@ def get_batch_initial_states(num_drones, device):
           'wind': torch.zeros(num_drones, 3, device=device).double(),  # Since wind is handled elsewhere, this value is overwritten
           'rotor_speeds': torch.tensor([INIT_ROTOR_SPEED]*4, device=device).repeat(num_drones, 1).double()}
     return x0
-
 
 def get_single_initial_state():
     x0_single = {'x': np.array([0, 0, 0]),
@@ -43,10 +42,10 @@ def get_single_initial_state():
     return x0_single
 
 
+# Runs and measures the time taken for a sequential simulation of a single drone
 def run_sequential_sim(traj, world, x0, dt):
     controller_single = SE3Control(quad_params)
     vehicle_single = Multirotor(quad_params, initial_state=x0)
-    # vehicle_single.motor_noise = 0
     mocap_params = {'pos_noise_density': 0.0005*np.ones((3,)),  # noise density for position
                     'vel_noise_density': 0.0010*np.ones((3,)),          # noise density for velocity
                     'att_noise_density': 0.0005*np.ones((3,)),          # noise density for attitude
@@ -73,47 +72,6 @@ def run_sequential_sim(traj, world, x0, dt):
 # NOTE(hersh500): in this test, every drone in the batch follows the same reference trajectory. This means that all drones should
 # finish at the same time. In practice, if you have a different trajectory for each drone, some will finish earlier than others,
 # which will change the actual average FPS you obtain with the batched simulation (will probably make it worse).
-
-# Example results on a machine with AMD Ryzen 9 3900X, 32GB RAM, NVidia 2080 Super, using 'dopri5' integration:
-# (Measuring GPU VRAM usage is imprecise and was obtained through monitoring nvidia-smi)
-# seq fps was 600.5703604578299
-# Peak memory usage so far = 462.84375 Mb
-# For batch size 2, CPU FPS = 24.122956586907613
-# Peak memory usage so far = 465.140625 Mb
-# For batch size 10, CPU FPS = 125.15730114973458
-# Peak memory usage so far = 468.60546875 Mb
-# For batch size 20, CPU FPS = 246.31885898407677
-# Peak memory usage so far = 476.85546875 Mb
-# For batch size 50, CPU FPS = 583.9553234830923
-# Peak memory usage so far = 492.578125 Mb
-# For batch size 100, CPU FPS = 1160.1165827787581
-# Peak memory usage so far = 744.48046875 Mb
-# For batch size 1000, CPU FPS = 6638.209940893531
-# Peak memory usage so far = 1947.76953125 Mb
-# For batch size 5000, CPU FPS = 9338.591548148928
-# Peak memory usage so far = 3770.22265625 Mb
-# For batch size 10000, CPU FPS = 9622.379744860333
-# Peak memory usage so far = 7002.85546875 Mb
-# For batch size 20000, CPU FPS = 9733.3694836387
-
-# batch size 2 VRAM used: 204 Mb
-# For batch size 2, GPU FPS = 11.774601581262745
-# batch size 10 VRAM used: 204 Mb
-# For batch size 10, GPU FPS = 58.96754820691534
-# batch size 20 VRAM used: 204 Mb
-# For batch size 20, GPU FPS = 118.45858057907071
-# batch size 50 VRAM used: 210 Mb
-# For batch size 50, GPU FPS = 291.9745161760285
-# batch size 100 VRAM used: 216 Mb
-# For batch size 100, GPU FPS = 573.5845244153943
-# batch size 1000 VRAM used: 336 Mb
-# For batch size 1000, GPU FPS = 5490.737933313098
-# batch size 5000 VRAM used: 884 Mb
-# For batch size 5000, GPU FPS = 22342.409595685356
-# batch size 10000 VRAM used: 1490 Mb
-# For batch size 10000, GPU FPS = 31395.2664199141
-# batch size 20000 VRAM used: 2758 Mb
-# For batch size 20000, GPU FPS = 39939.907530636054
 def main():
     # Performance for larger (>5000) batch sizes degrades on CPU when you do this (and don't use multiprocessing),
     # But this step is necessary whenever using batched simulation with CPU multiprocessing.
@@ -146,8 +104,9 @@ def main():
     print(f"seq fps was {seq_fps}")
 
     device = torch.device("cpu")
-    # integrator = 'dopri5'   # 'rk4' for fixed step size (faster)
-    integrator = "rk4"
+    integrator = 'dopri5'   # 'rk4' for fixed step size (faster)
+    # integrator = "rk4"
+
     # Get CPU FPS
     for batch_size in batch_sizes:
         all_quad_params = [dict(quad_params) for _ in range(batch_size)]
@@ -193,7 +152,7 @@ def main():
             gpu_times.append(done_time)
             print(f"For batch size {batch_size}, GPU FPS = {total_frames/done_time}")
 
-    fig, ax = plt.subplots(1, 3, figsize=(15, 5))
+    fig, ax = plt.subplots(1, 3, figsize=(9, 3))
     ax[0].plot(batch_sizes, cpu_fps, label="CPU")
     if len(gpu_fps) > 0:
         ax[0].plot(batch_sizes, gpu_fps, label="GPU")

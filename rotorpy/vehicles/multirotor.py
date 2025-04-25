@@ -524,7 +524,11 @@ class Multirotor(object):
 
 class BatchedMultirotorParams:
     """ 
-    A batched version of the multirotor params. 
+    A container class for various multirotor params. 
+    Parameters:
+        multirotor_params_list: list of dictionaries containing the parameters for each drone (see vehicles/crazyflie_params.py for example of such a dictionary).
+        num_drones: number of drones in the simulation.
+        device: the device to use for the simulation (e.g. torch.device('cuda')).
     """
     def __init__(self, multirotor_params_list, num_drones, device):
         assert len(multirotor_params_list) == num_drones
@@ -594,12 +598,20 @@ class BatchedMultirotorParams:
         self.kp_att = torch.tensor([multirotor_params.get('kp_att', 3000.0) for multirotor_params in multirotor_params_list]).unsqueeze(-1).to(device)
         self.kd_att = torch.tensor([multirotor_params.get('kd_att', 360.0) for multirotor_params in multirotor_params_list]).unsqueeze(-1).to(device)
 
-    # Update methods that require some additional computations
+    # Update methods that require some additional computations.
+    # These are useful for dynamically updating the parameters of this object, for example for domain randomization.
     def update_mass(self, idx, mass):
+        """
+        Update the mass and weight of the drone at index idx.
+        """
         self.mass[idx] = mass
         self.weight[idx,-1] = -mass * self.g
 
     def update_thrust_and_rotor_params(self, idx, k_eta = None, k_m = None, rotor_pos = None):
+        """
+        Update k_eta, k_m, and rotor positions of the drone at index idx.
+        Some parameters are optional, and if not provided, the current value is kept.
+        """
         if k_eta is not None:
             self.k_eta[idx] = k_eta
         if k_m is not None:
@@ -622,12 +634,18 @@ class BatchedMultirotorParams:
         self.TM_to_f[idx] = torch.linalg.inv(self.f_to_TM[idx])
 
     def update_inertia(self, idx, Ixx=None, Iyy=None, Izz=None):
+        """
+        Update the inertia of the drone at index idx. Parameters with value None are not updated.
+        """
         self.inertia[idx][0,0] = Ixx
         self.inertia[idx][1,1] = Iyy
         self.inertia[idx][2,2] = Izz
         self.inv_inertia[idx] = torch.linalg.inv(self.inertia[idx])
 
     def update_drag(self, idx, c_Dx=None, c_Dy=None, c_Dz=None, k_d=None, k_z=None):
+        """
+        Update various drag parameters of the drone at index idx. Parameters with value None are not updated.
+        """
         if c_Dx is not None:
             self.drag_matrix[idx][0,0] = c_Dx
         if c_Dy is not None:
@@ -644,7 +662,7 @@ class BatchedMultirotorParams:
         """
         Extracts the geometry in self.rotors for efficient use later on in the computation of
         wrenches acting on the rigid body.
-        The rotor_geometry is an array of length (n,3), where n is the number of rotors.
+        The rotor_geometry is a tensor of shape (num_drones, n,3), where n is the number of rotors.
         Each row corresponds to the position vector of the rotor relative to the CoM.
         """
 
@@ -663,13 +681,17 @@ class BatchedMultirotorParams:
 
 class BatchedMultirotor(object):
     """
-    Batched Multirotor forward dynamics model.
+    Batched Multirotor forward dynamics model, implemented in PyTorch.
+    This class follows the same API as the original Multirotor class, but is designed to work with batches of drones.
+    Generally, quantities that would be numpy arrays in `Multirotor` are instead torch tensors in this class.
 
     states: [position, velocity, attitude, body rates, wind, rotor speeds]
 
     Parameters:
-        batched_params: batched dictionary containing relevant physical parameters for the multirotor.
-        initial_state: the initial state of the vehicle.
+        batched_params: BatchedMultirotorParams object, containing relevant physical parameters for the multirotor.
+        num_drones: the number of drones in the batch.
+        initial_states: the initial state of the vehicle. Contains the same keys as "initial_states" of `Multirotor`, but each 
+                                value is a pytorch tensor with a prepended batch dimension. e.g. initial_states['x'].shape = (num_drones, 3) 
         control_abstraction: the appropriate control abstraction that is used by the controller, options are...
                                 'cmd_motor_speeds': the controller directly commands motor speeds.
                                 'cmd_motor_thrusts': the controller commands forces for each rotor.
@@ -879,9 +901,6 @@ class BatchedMultirotor(object):
             M_flap = torch.zeros((num_drones, 3, self.params.num_rotors), device=self.device)
 
         # Compute the moments due to the rotor thrusts, rotor drag (if applicable), and rotor drag torques
-        # install opt-einsum https://pytorch.org/docs/stable/generated/torch.einsum.html
-        # M_force = -torch.einsum('bijk, bik->bj', BatchedMultirotor.hat_map(self.rotor_geometry.squeeze()).unsqueeze(0).double(), T+H)
-
         M_force = -torch.einsum('bijk, bik->bj', self.params.rotor_geometry_hat_maps[idxs], T + H)
         M_yaw = torch.zeros(num_drones, 3, 4, device=self.device)
         M_yaw[..., -1, :] = self.params.rotor_dir[idxs] * self.params.k_m[idxs] * rotor_speeds ** 2
@@ -992,8 +1011,6 @@ class BatchedMultirotor(object):
             raise ValueError(
                 "Invalid control abstraction selected. Options are: cmd_motor_speeds, cmd_motor_thrusts, cmd_ctbm, cmd_ctbr, cmd_ctatt, cmd_vel, cmd_acc")
 
-        # print(f"cmd_thrust shape is {cmd_thrust.shape}")
-        # print(f"cmd_moment shape is {cmd_moment.shape}")
         TM = torch.cat([cmd_thrust, cmd_moment.squeeze(-1)], dim=-1)
         cmd_rotor_thrusts = (self.params.TM_to_f[idxs] @ TM.unsqueeze(1).transpose(-1, -2)).squeeze(-1)
         cmd_motor_speeds = cmd_rotor_thrusts / self.params.k_eta[idxs]
@@ -1010,8 +1027,6 @@ class BatchedMultirotor(object):
                          2 * (q[1] * q[2] - q[0] * q[3]),
                          1 - 2 * (q[0] ** 2 + q[1] ** 2)])
 
-    # Slower on GPU until N >= 4e5
-    # Won't work on numpy < 2.2.2 or torch < 2, I think!
     @classmethod
     def hat_map(cls, s):
         """

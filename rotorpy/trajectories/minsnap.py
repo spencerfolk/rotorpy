@@ -327,6 +327,10 @@ class MinSnap(object):
 
 class BatchedMinSnap:
     '''
+    This is a batched version of the MinSnap trajectory class above.
+    It is designed to act as a wrapper around existing MinSnap objects, so if you want to generate minsnap trajectories, use the MinSnap class
+        and then pass a list of resulting objects to this class.
+
     Simultaneously samples multiple MinSnap reference trajectories at a given time using vectorized ops.
     If you have a lot of trajectories, this is a lot faster iterating through each of them. For this class,
     the trajectories must have the same number of spline segments and same polynomial degree.
@@ -379,6 +383,9 @@ class BatchedMinSnap:
     def update(self, t: np.ndarray):
         '''
         Evaluates trajectory [i] at time t[i], and returns the flat_outputs in the same format as RotorPy.
+        Outputs:
+            flat_output, a dict describing the present desired flat outputs with same keys as `MinSnap`. Entries in the dictionary are 
+                torch tensors of shape (num_trajs, 3) for x, x_dot, x_ddot, and (num_trajs,) for yaw and yaw_dot.
         '''
         segment_idxs = torch.zeros(self.num_trajs).int()
         ts = torch.zeros(self.num_trajs)

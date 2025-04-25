@@ -180,7 +180,7 @@ class SE3Control(object):
 class BatchedSE3Control(object):
     def __init__(self, batch_params, num_drones, device, kp_pos=None, kd_pos=None, kp_att=None, kd_att=None):
         '''
-        quad_params, dict with keys specified in rotorpy/vehicles
+        batch_params, BatchedMultirotorParams object 
         num_drones: int, number of drones in the batch
         device: torch.device("cpu") or torch.device("cuda")
 

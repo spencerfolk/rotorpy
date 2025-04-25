@@ -32,6 +32,9 @@ class NoWind(object):
         return self.wind
 
 class BatchedNoWind(object):
+    '''
+    Batched version of NoWind that prepends a batch dimension to the output.
+    '''
     def __init__(self, num_drones):
         self.wind = torch.zeros(num_drones, 3)
 
@@ -61,6 +64,9 @@ class ConstantWind(object):
         return self.wind
 
 class BatchedConstantWind(object):
+    """
+    Batched version of ConstantWind that prepends a batch dimension to the output.
+    """
     def __init__(self, num_drones, wx, wy, wz):
         self.wind = torch.tensor([wx, wy, wz]).repeat(num_drones, 1)
 

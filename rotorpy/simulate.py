@@ -241,13 +241,13 @@ def simulate_batch(world,
 
     Inputs:
         world, a class representing the world it is flying in, including objects and world bounds.
-        initial_states, a dict defining the vehicle initial conditions with appropriate keys
+        initial_states, a dict of torch tensors defining the vehicle initial conditions with appropriate keys. See `BatchedMultirotor` for details.
         vehicles, Vehicle object containing the dynamics
-        controller, Controller object containing the controller
-        trajectories, Trajectory object containing the trajectories to follow
-        wind_profile, Wind Profile object containing the wind generator.
+        controller, BatchedController object containing the controller
+        trajectories, BatchedTrajectory object containing the trajectories to follow
+        wind_profile, Batched Wind Profile object containing the wind generator.
         t_final, array of maximum simulation durations for each vehicle in the batch, s
-        t_step, the time between each step in the simulator, s (shared across drones)
+        t_step, float, the time between each step in the simulator, s (shared across drones)
         safety_margin, the radius of the ball surrounding the vehicle position to determine if a collision occurs
         terminate, None, False, or a function of time and state that returns
             ExitStatus. If None (default), terminate when hover is reached at
@@ -259,17 +259,17 @@ def simulate_batch(world,
         print_fps: bool, whether or not to print the FPS achieved by the simulation at each step.
 
     Outputs:
-        time, seconds, shape=(num_drones, N,) where N is the maximum number of timesteps by any drone in the batch
+        time, seconds, numpy array of shape=(num_drones, N,) where N is the maximum number of timesteps by any drone in the batch
         state, a dict describing the state history with keys
-            x, position, m, shape=(N,B,3) where B is the number of drones in the batch
-            v, linear velocity, m/s, shape=(N,B,3)
-            q, quaternion [i,j,k,w], shape=(N,B,4)
-            w, angular velocity, rad/s, shape=(N,B,3)
-            rotor_speeds, motor speeds, rad/s, shape=(N,B,n) where n is the number of rotors
-            wind, wind velocity, m/s, shape=(N,B,3)
+            x, position, m, numpy array of shape=(N,B,3) where B is the number of drones in the batch
+            v, linear velocity, m/s, numpy array of shape=(N,B,3)
+            q, quaternion [i,j,k,w], numpy array of shape=(N,B,4)
+            w, angular velocity, rad/s, numpy array of shape=(N,B,3)
+            rotor_speeds, motor speeds, rad/s, numpy array of shape=(N,B,n) where n is the number of rotors
+            wind, wind velocity, m/s, numpy array of shape=(N,B,3)
 
         control, a dict describing the command input history with keys
-            cmd_motor_speeds, motor speeds, rad/s, shape=(N,B,4)
+            cmd_motor_speeds, motor speeds, rad/s, numpy array of shape=(N,B,4)
             cmd_q, commanded orientation (not used by simulator), quaternion [i,j,k,w], shape=(N,B,4)
             cmd_w, commanded angular velocity (not used by simulator), rad/s, shape=(N,B,3)
         flat, a dict describing the desired flat outputs from the trajectory with keys

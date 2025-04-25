@@ -90,15 +90,15 @@ class BatchedTwoDLissajous(object):
     def __init__(self, A_s, B_s, a_s, b_s, delta_s, x_offset_s, y_offset_s, height_s, yaw_bool_s, device='cpu'):
         """
         Inputs:
-            A_s := array of amplitudes on the X axis
-            B_s := array of amplitudes on the Y axis
-            a_s := array of frequencies on the X axis
-            b_s := array of frequencies on the Y axis
-            delta_s := array of phase offsets between the x and y parameterization
-            x_offset_s := array of the offset of the trajectory in the x axis
-            y_offset_s := array of the offset of the trajectory in the y axis
-            height_s := array of the z height that the lissajous occurs at
-            yaw_bool_s := array of booleans determining whether the vehicle should yaw
+            A_s := array of amplitudes on the X axis, with shape (num_uavs,)
+            B_s := array of amplitudes on the Y axis, with shape (num_uavs,)
+            a_s := array of frequencies on the X axis, with shape (num_uavs,)
+            b_s := array of frequencies on the Y axis, with shape (num_uavs,)
+            delta_s := array of phase offsets between the x and y parameterization: (num_uavs,)
+            x_offset_s := array of the offset of the trajectory in the x axis: (num_uavs,)
+            y_offset_s := array of the offset of the trajectory in the y axis: (num_uavs,)
+            height_s := array of the z height that the lissajous occurs at: (num_uavs,)
+            yaw_bool_s := array of booleans determining whether the vehicle should yaw: (num_uavs,)
             device := the device to run the simulation on
         """
 
