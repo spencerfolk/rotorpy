@@ -8,8 +8,6 @@ TODO: include a plot of the speedup here.
 
 We have also updated the Gymnasium environment in `rotorpy/learning/` to use the batched dynamics, allowing faster RL training by simulating multiple vehicles in parallel with domain randomization. Running `examples/ppo_hover_train.py` produces a functional hovering policy in about 5 million simulation timesteps, which takes under 4 minutes of wall clock time on a MacBook Air M3. (Note: This script acts as a good starting point, but for sim2real, more careful reward engineering, domain randomization, and hyperparameter tuning will be necessary.)
 
-**NEW in `v1.1.0`**: RotorPy now includes a customizable [Gymnasium](https://github.com/Farama-Foundation/Gymnasium) environment found in the new `rotorpy/learning/` module. 
-
 <p align="center"><img src="/media/ppo_hover_20k.gif" width="32%"/><img src="/media/ppo_hover_600k.gif" width="32%"/><img src="/media/ppo_hover_1000k.gif" width="32%"/></p>
 
 ## Purpose and Scope
@@ -40,6 +38,14 @@ RotorPy can be installed using `pip`:
 ```
 pip install rotorpy 
 ```
+
+To install learning dependencies, run: 
+
+```
+pip install rotorpy.[learning]
+```
+
+In addition to the base requirements, it will install `stable_baselines3` and `tensorboard`. For other tagged versions, see `pyproject.toml`. 
 
 # Usage
 
