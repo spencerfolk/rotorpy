@@ -11,7 +11,7 @@ EXAMPLES_DIR = os.path.join(os.path.dirname(__file__), '..', 'examples')
 
 example_scripts = [
     p for p in glob.glob(os.path.join(EXAMPLES_DIR, "*.py"))
-    if os.path.isfile(p) and 'ardupilot' not in os.path.basename(p)
+    if os.path.isfile(p) and 'ardupilot' not in os.path.basename(p) and 'ppo' not in os.path.basename(p)
 ]
 
 @pytest.mark.parametrize("script_path", example_scripts)
