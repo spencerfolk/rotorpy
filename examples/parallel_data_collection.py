@@ -229,7 +229,7 @@ def single_minsnap_instance(world, vehicle, controller, num_waypoints, start_way
         yaw_angles=np.zeros(len(waypoints))
 
     # Generate the minsnap trajectory
-    traj = MinSnap(points=waypoints, yaw_angles=yaw_angles, v_avg=vavg)
+    traj = MinSnap(points=waypoints, yaw_angles=yaw_angles, v_avg=vavg, verbose=False)
 
     # Now create an instance of the simulator and run it. 
     sim_instance = Environment(vehicle=vehicle, controller=controller, trajectory=traj, wind_profile=None, sim_rate=100)
@@ -381,33 +381,6 @@ def main(num_simulations, parallel_bool, save_trials=False):
 
     # Create the output file
     output_csv_file = os.path.dirname(__file__) + '/data.csv'
-
-    if os.path.exists(output_csv_file):
-        # Ask the user if they want to remove the existing file.
-        user_input = input("The file {} already exists. Do you want to remove the existing file? (y/n)".format(output_csv_file))
-        if user_input == 'y':
-            # Remove the existing file
-            os.remove(output_csv_file)
-        elif user_input == 'n':
-            raise Exception("Please delete or rename the file {} before running this script.".format(output_csv_file))
-        else:
-            raise Exception("Invalid input. Please enter 'y' or 'n'.")
-
-    if save_trials:
-        savepath = os.path.join(os.path.dirname(__file__), 'trial_data')
-        if not os.path.exists(savepath):
-            os.makedirs(savepath)
-        else:
-            # Ask the user if they want to remove the existing files in the directory.
-            user_input = input("The directory {} already exists. Do you want to remove the existing files? (y/n)".format(savepath))
-            if user_input == 'y':
-                # Remove existing files in the directory
-                for file in os.listdir(savepath):
-                    os.remove(os.path.join(savepath, file))
-            elif user_input == 'n':
-                raise Exception("Please delete or rename the files in the directory {} before running this script.".format(savepath))
-            else:
-                raise Exception("Invalid input. Please enter 'y' or 'n'.")
 
     # Append headers to the output file
     with open(output_csv_file, 'w', newline='') as file:
