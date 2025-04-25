@@ -67,6 +67,7 @@ class QuadrotorEnv(VecEnv):
     """
     metadata = {"render_modes": ["None", "3D", "console", "debug"],
                 "render_fps": 30,
+                "num_quads_to_render": 10,
                 "control_modes": ['cmd_motor_speeds', 'cmd_motor_thrusts', 'cmd_ctbr', 'cmd_ctbm', 'cmd_vel', 'cmd_ctatt']}
 
     def __init__(self,
@@ -91,6 +92,9 @@ class QuadrotorEnv(VecEnv):
 
         self.num_envs = num_envs
         self.device = device
+
+        # Number of environments to render when render is called.
+        self.num_quads_to_render = self.metadata['num_quads_to_render']
 
         # Initial state is a dict of initial states for the quadrotor. Assert that all the keys are present and that they have the right shape. 
         assert all(key in initial_states for key in ('x', 'v', 'q', 'w', 'wind', 'rotor_speeds'))
@@ -190,7 +194,7 @@ class QuadrotorEnv(VecEnv):
                 colors = list(mcolors.CSS4_COLORS)
             else:
                 colors = [color]
-            self.quad_objs = [Quadrotor(self.ax, wind=True, color=np.random.choice(colors), wind_scale_factor=5) for _ in range(min(20, self.num_envs))]
+            self.quad_objs = [Quadrotor(self.ax, wind=True, color=np.random.choice(colors), wind_scale_factor=5) for _ in range(min(self.num_quads_to_render, self.num_envs))]
             self.world_artists = None
             self.title_artist = self.ax.set_title('t = {}'.format(self.t))
 
@@ -488,8 +492,8 @@ class QuadrotorEnv(VecEnv):
 
     def render(self, mode=None):
         if self.render_mode[0] == '3D':
-            # only plot a maximum of 20 quads, so the plot is still interpretable.
-            for env_idx in range(min(self.num_envs, 20)):
+            # only plot a maximum of num_evs quads, so the plot is still interpretable.
+            for env_idx in range(min(self.num_envs, self.num_quads_to_render)):
                 self._plot_quad(env_idx)
         elif self.render_mode[0] == 'console':
             for env_idx in range(min(self.num_envs, 10)):
