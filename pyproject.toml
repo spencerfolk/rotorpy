@@ -1,6 +1,6 @@
 [project]
 name = "rotorpy"
-version = "1.2.0"
+version = "2.0.0"
 description = "A multirotor simulator with aerodynamics for education and research."
 readme = "README.md"
 requires-python = ">=3.8"
@@ -21,19 +21,25 @@ classifiers = [
     "Programming Language :: Python :: 3 :: Only",
 ]
 dependencies = [
+    'pyyaml',
     'cvxopt',
     'matplotlib',
-    'numpy',
+    'numpy>=1.24',
     'scipy',
     'pandas',
     'tqdm',
     'gymnasium',
-    'timed_count' # Only for ardupilot sitl example
+    'roma',           # For batched sim
+    'torch>=1.11.0',  # For batched sim
+    'torchdiffeq',    # For batched sim
+    'opt-einsum',     # For batched sim
+    'timed_count', # Only for ardupilot sitl example
 ]
 
 [project.optional-dependencies]
 learning = [
-    'stable_baselines3'
+    'stable_baselines3',
+    'tensorboard',
 ]
 dev = [
     'pytest',
@@ -42,6 +48,7 @@ dev = [
 testing = [
     'pytest',
     'filterpy == 1.4.5',
+    'stable_baselines3',
 ]
 filter = [
     'filterpy == 1.4.5',

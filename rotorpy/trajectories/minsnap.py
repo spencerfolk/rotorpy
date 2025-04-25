@@ -4,6 +4,8 @@ Imports
 import numpy as np
 import cvxopt
 from scipy.linalg import block_diag
+from typing import List
+import torch
 
 def cvxopt_solve_qp(P, q, G=None, h=None, A=None, b=None):
     """
@@ -321,6 +323,95 @@ class MinSnap(object):
         flat_output = { 'x':x, 'x_dot':x_dot, 'x_ddot':x_ddot, 'x_dddot':x_dddot, 'x_ddddot':x_ddddot,
                         'yaw':yaw, 'yaw_dot':yaw_dot, 'yaw_ddot':yaw_ddot}
         return flat_output
+
+
+class BatchedMinSnap:
+    '''
+    This is a batched version of the MinSnap trajectory class above.
+    It is designed to act as a wrapper around existing MinSnap objects, so if you want to generate minsnap trajectories, use the MinSnap class
+        and then pass a list of resulting objects to this class.
+
+    Simultaneously samples multiple MinSnap reference trajectories at a given time using vectorized ops.
+    If you have a lot of trajectories, this is a lot faster iterating through each of them. For this class,
+    the trajectories must have the same number of spline segments and same polynomial degree.
+    '''
+    def __init__(self, list_of_trajectories: List, device):
+        delta_ts = []
+        t_keyframes = []
+        xs = []
+        x_dots = []
+        x_ddots = []
+        yaws = []
+        yaw_dots = []
+        for i, traj in enumerate(list_of_trajectories):
+            delta_ts.append(traj.delta_t)
+            t_keyframes.append(traj.t_keyframes)
+            xs.append(traj.x_poly)
+            x_dots.append(traj.x_dot_poly)
+            x_ddots.append(traj.x_ddot_poly)
+            yaws.append(traj.yaw_poly)
+            yaw_dots.append(traj.yaw_dot_poly)
+            assert(traj.x_poly.shape[-1] == 8)
+            if i == 0:
+                num_segments = len(traj.t_keyframes)
+            assert(len(traj.t_keyframes) == num_segments)
+
+        self.delta_ts = np.array(delta_ts)
+        self.t_keyframes = np.array(t_keyframes)
+        self.t_keyframes_summed = np.array(t_keyframes)
+        self.t_keyframes_summed[...,:-1] += self.delta_ts
+        self.xs = torch.from_numpy(np.array(xs)).to(device, non_blocking=True)
+        self.x_dots = torch.from_numpy(np.array(x_dots)).to(device, non_blocking=True)
+        self.x_ddots = torch.from_numpy(np.array(x_ddots)).to(device, non_blocking=True)
+        self.yaws = torch.from_numpy(np.array(yaws)).to(device, non_blocking=True)
+        self.yaw_dots = torch.from_numpy(np.array(yaw_dots)).to(device, non_blocking=True)
+
+
+        self.device = device
+
+        self.num_trajs = len(list_of_trajectories)
+
+    def batch_polyval(self, polynomial_coeffs, ts_powers):
+        '''
+        Evaluate multiple polynomials of the same degree at once
+        polynomial_coeffs: torch.Tensor of shape (batch_dim, num_axes, poly_degree)
+        ts: torch.Tensor of shape (batch_dim, poly_degree)
+        '''
+        result = torch.sum(polynomial_coeffs * ts_powers, dim=-1)
+        return result
+
+    def update(self, t: np.ndarray):
+        '''
+        Evaluates trajectory [i] at time t[i], and returns the flat_outputs in the same format as RotorPy.
+        Outputs:
+            flat_output, a dict describing the present desired flat outputs with same keys as `MinSnap`. Entries in the dictionary are 
+                torch tensors of shape (num_trajs, 3) for x, x_dot, x_ddot, and (num_trajs,) for yaw and yaw_dot.
+        '''
+        segment_idxs = torch.zeros(self.num_trajs).int()
+        ts = torch.zeros(self.num_trajs)
+        t_tmp = np.clip(t, self.t_keyframes[:,0], self.t_keyframes[:,-1])
+        for i in range(self.num_trajs):
+            for j in range(self.t_keyframes.shape[1]):
+                if self.t_keyframes_summed[i,j] >= t_tmp[i]:
+                    segment_idxs[i] = j
+                    ts[i] = t_tmp[i] - self.t_keyframes[i,j]
+                    break
+        segment_idxs = segment_idxs.to(self.device, non_blocking=True).long()
+        ts = ts.to(self.device, non_blocking=True)
+
+
+        ts_expd = torch.cat([(ts**i).unsqueeze(-1) for i in reversed(range(0, 8))], dim=-1).unsqueeze(1)
+        batch_idxs = torch.arange(self.num_trajs, device=self.device)
+        x_out = self.batch_polyval(self.xs[batch_idxs.long(),segment_idxs], ts_expd).double()
+        x_dot_out = self.batch_polyval(self.x_dots[batch_idxs.long(),segment_idxs], ts_expd[...,1:]).double()
+        x_ddot_out = self.batch_polyval(self.x_ddots[batch_idxs.long(),segment_idxs], ts_expd[...,2:]).double()
+        yaw_out = self.batch_polyval(self.yaws[batch_idxs.long(),segment_idxs], ts_expd).squeeze(-1).double()
+        yaw_dots_out = self.batch_polyval(self.yaw_dots[batch_idxs.long(),segment_idxs], ts_expd[...,1:]).squeeze(-1).double()
+
+        flat_output = {'x':x_out, 'x_dot':x_dot_out, 'x_ddot':x_ddot_out,
+                       'yaw':yaw_out, 'yaw_dot':yaw_dots_out}
+        return flat_output
+
 
 if __name__=="__main__":
 

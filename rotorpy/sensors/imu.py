@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.spatial.transform import Rotation
+import torch
 import copy
 
 class Imu:
@@ -125,23 +126,170 @@ class Imu:
 
         return {'accel': accelerometer_measurement, 'gyro': gyroscope_measurement}
 
-if __name__=="__main__":
-    # The default 
+class BatchedImu:
+    def __init__(self, num_drones,
+                 accelerometer_params=None,
+                 gyroscope_params=None,
+                 R_BS=None,
+                 p_BS=None,
+                 sampling_rate=500,
+                 gravity_vector=None,
+                 device='cpu'):
+        self.device = device
+        self.num_drones = num_drones
+        self.sampling_rate = sampling_rate
+        self.rate_scale = (sampling_rate / 2) ** 0.5
+
+        self.R_BS = torch.eye(3, device=device).double() if R_BS is None else R_BS.double().to(device)
+        self.p_BS = torch.zeros(3, device=device).double() if p_BS is None else p_BS.double().to(device)
+        self.gravity_vector = torch.tensor([0, 0, -9.81], device=device, dtype=torch.double) if gravity_vector is None else gravity_vector.double().to(device)
+
+        accel_params = accelerometer_params or {
+            'initial_bias': torch.zeros(3, device=device).double(),
+            'noise_density': (0.38 ** 2) * torch.ones(3, device=device).double(),
+            'random_walk': torch.zeros(3, device=device).double()
+        }
+
+        gyro_params = gyroscope_params or {
+            'initial_bias': torch.zeros(3, device=device).double(),
+            'noise_density': (0.01 ** 2) * torch.ones(3, device=device).double(),
+            'random_walk': torch.zeros(3, device=device).double()
+        }
+
+        # Repeat biases for each drone
+        self.accel_bias = torch.Tensor(accel_params['initial_bias'][np.newaxis].repeat(num_drones, 1)).double()
+        self.gyro_bias = torch.Tensor(gyro_params['initial_bias'][np.newaxis].repeat(num_drones, 1)).double()
+        self.accel_noise = torch.Tensor(accel_params['noise_density']).double()
+        self.gyro_noise = torch.Tensor(gyro_params['noise_density']).double()
+        self.accel_random_walk = torch.Tensor(accel_params['random_walk']).double()
+        self.gyro_random_walk = torch.Tensor(gyro_params['random_walk']).double()
+
+    def bias_step(self):
+        self.accel_bias += torch.randn_like(self.accel_bias) * (self.accel_random_walk / self.rate_scale)
+        self.gyro_bias += torch.randn_like(self.gyro_bias) * (self.gyro_random_walk / self.rate_scale)
+
+    def measurement(self, state, acceleration, idxs=None, with_noise=True):
+        """
+        state['x'], ['v'], ['w']: (num_drones, 3)
+        state['q']: (num_drones, 4) (xyzw format)
+        acceleration['vdot'], ['wdot']: (B, 3)
+        idxs: list of drones in the batch for which to compute IMU measurements.
+        """
+        if idxs is None:
+            idxs = [i for i in range(self.num_drones)]
+
+        q_WB = state['q'][idxs]  # (num_drones, 4)
+        w_WB = state['w'][idxs]
+        alpha_WB_W = acceleration['wdot'][idxs]
+        a_WB_W = acceleration['vdot'][idxs]
+
+        # Get rotation matrices from quaternions (num_drones, 3, 3)
+        R_WB = self.quat_to_rotmat(q_WB)
+
+        # Sensor offset in world frame
+        p_BS_W = torch.einsum('bij,j->bi', R_WB, self.p_BS)
+
+        cross_w_p = torch.cross(w_WB, p_BS_W, dim=-1)
+        cross_w_w_p = torch.cross(w_WB, cross_w_p, dim=-1)
+        cross_alpha_p = torch.cross(alpha_WB_W, p_BS_W, dim=-1)
+        a_WS_W = a_WB_W + cross_alpha_p + cross_w_w_p
+
+        R_SW = torch.einsum('ij,bij->bij', self.R_BS.T, R_WB.transpose(1, 2))
+        a_WS_S = torch.einsum('bij,bj->bi', R_SW, a_WS_W - self.gravity_vector)
+
+        # Apply bias + noise
+        self.bias_step()
+        a_meas = a_WS_S + self.accel_bias[idxs]
+        w_meas = w_WB + self.gyro_bias[idxs]
+
+        if with_noise:
+            a_meas += self.rate_scale * torch.randn_like(a_meas) * self.accel_noise
+            w_meas += self.rate_scale * torch.randn_like(w_meas) * self.gyro_noise
+
+        a_meas_out = torch.full((self.num_drones, 3), float("nan"), device=a_meas.device).double()
+        w_meas_out = torch.full((self.num_drones, 3), float("nan"), device=w_meas.device).double()
+        a_meas_out[idxs] = a_meas
+        w_meas_out[idxs] = w_meas
+
+        return {'accel': a_meas_out, 'gyro': w_meas_out}
+
+    @staticmethod
+    def quat_to_rotmat(q):
+        # Input shape (B, 4) in xyzw
+        x, y, z, w = q[:, 0], q[:, 1], q[:, 2], q[:, 3]
+        B = q.shape[0]
+        R = torch.empty((B, 3, 3), device=q.device, dtype=torch.double)
+        R[:, 0, 0] = 1 - 2*(y**2 + z**2)
+        R[:, 0, 1] = 2*(x*y - z*w)
+        R[:, 0, 2] = 2*(x*z + y*w)
+        R[:, 1, 0] = 2*(x*y + z*w)
+        R[:, 1, 1] = 1 - 2*(x**2 + z**2)
+        R[:, 1, 2] = 2*(y*z - x*w)
+        R[:, 2, 0] = 2*(x*z - y*w)
+        R[:, 2, 1] = 2*(y*z + x*w)
+        R[:, 2, 2] = 1 - 2*(x**2 + y**2)
+        return R
+
+if __name__ == "__main__":
+
     sim_rate = 100
-    accelerometer_params = {'initial_bias': np.array([0,0,0]), # m/s^2
-                                    'noise_density': (0.38**2)*np.ones(3,), # m/s^2 / sqrt(Hz)
-                                    'random_walk': np.zeros(3,) # m/s^2 * sqrt(Hz)
-                                    }
-    gyroscope_params     = {'initial_bias': np.array([0,0,0]), # m/s^2
-                            'noise_density': (0.01**2)*np.ones(3,), # rad/s / sqrt(Hz)
-                            'random_walk': np.zeros(3,) # rad/s * sqrt(Hz)
-                            }
+    accelerometer_params = {
+        'initial_bias': np.array([0, 0, 0]),  # m/s^2
+        'noise_density': (0.38**2) * np.ones(3,),  # m/s^2 / sqrt(Hz)
+        'random_walk': np.zeros(3,)  # m/s^2 * sqrt(Hz)
+    }
+    gyroscope_params = {
+        'initial_bias': np.array([0, 0, 0]),  # rad/s
+        'noise_density': (0.01**2) * np.ones(3,),  # rad/s / sqrt(Hz)
+        'random_walk': np.zeros(3,)  # rad/s * sqrt(Hz)
+    }
 
     imu = Imu(accelerometer_params,
-                gyroscope_params,
-                p_BS = np.zeros(3,),
-                R_BS = np.eye(3),
-                sampling_rate=sim_rate)
+              gyroscope_params,
+              p_BS=np.zeros(3,),
+              R_BS=np.eye(3),
+              sampling_rate=sim_rate)
 
-    print(imu.measurement({'x': np.array([0,0,0]), 'v': np.array([0,0,0]), 'q': np.array([0,0,0,1]), 'w': np.array([0,0,0])}, 
-                    {'vdot': np.array([0,0,0]), 'wdot': np.array([0,0,0])}))
+    state_np = {'x': np.array([0, 0, 0]),
+                'v': np.array([0, 0, 0]),
+                'q': np.array([0, 0, 0, 1]),
+                'w': np.array([0, 0, 0])}
+
+    accel_np = {'vdot': np.array([0, 0, 0]),
+                'wdot': np.array([0, 0, 0])}
+
+    meas_single = imu.measurement(state_np, accel_np, with_noise=False)
+
+    print("=== Single Drone IMU Measurement ===")
+    print("Accel:", meas_single['accel'])
+    print("Gyro: ", meas_single['gyro'])
+
+    num_drones = 10  # batch size
+    batched_imu = BatchedImu(num_drones=1,
+                              accelerometer_params=accelerometer_params,
+                              gyroscope_params=gyroscope_params,
+                              p_BS=torch.zeros(3),
+                              R_BS=torch.eye(3),
+                              sampling_rate=sim_rate)
+
+    state_batch = {
+        'x': torch.zeros(num_drones, 3),
+        'v': torch.zeros(num_drones, 3),
+        'q': torch.tensor([0., 0., 0., 1.]).unsqueeze(0).repeat(num_drones, 1),
+        'w': torch.zeros(num_drones, 3)
+    }
+
+    accel_batch = {
+        'vdot': torch.zeros(num_drones, 3),
+        'wdot': torch.zeros(num_drones, 3)
+    }
+
+    meas_batch = batched_imu.measurement(state_batch, accel_batch, with_noise=False)
+
+    print("\n=== Batched IMU Measurement ===")
+    print("Accel:", meas_batch['accel'].numpy())
+    print("Gyro: ", meas_batch['gyro'].numpy())
+
+    print("\n=== Difference ===")
+    print("Accel diff:", np.abs(meas_single['accel'] - meas_batch['accel'][0].numpy()))
+    print("Gyro diff: ", np.abs(meas_single['gyro'] - meas_batch['gyro'][0].numpy()))

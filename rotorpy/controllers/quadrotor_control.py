@@ -1,4 +1,6 @@
 import numpy as np
+import torch
+import roma
 from scipy.spatial.transform import Rotation
 
 class SE3Control(object):
@@ -173,3 +175,133 @@ class SE3Control(object):
                          'cmd_acc': cmd_acc}
         
         return control_input
+
+
+class BatchedSE3Control(object):
+    def __init__(self, batch_params, num_drones, device, kp_pos=None, kd_pos=None, kp_att=None, kd_att=None):
+        '''
+        batch_params, BatchedMultirotorParams object 
+        num_drones: int, number of drones in the batch
+        device: torch.device("cpu") or torch.device("cuda")
+
+        kp_pos: torch.Tensor of shape (num_drones, 3)
+        kd_pos: torch.Tensor of shape (num_drones, 3)
+        kp_att: torch.Tensor of shape (num_drones, 1)
+        kd_att: torch.Tensor of shape (num_drones, 1)
+        '''
+        assert batch_params.device == device
+        self.params = batch_params
+        self.device = device
+        # Quadrotor physical parameters
+
+        # Gains
+        if kp_pos is None:
+            self.kp_pos = torch.tensor([6.5, 6.5, 15], device=self.device).repeat(num_drones, 1).double()
+        else:
+            self.kp_pos = kp_pos.to(self.device).double()
+        if kd_pos is None:
+            self.kd_pos = torch.tensor([4.0, 4.0, 9], device=self.device).repeat(num_drones, 1).double()
+        else:
+            self.kd_pos = kd_pos.to(self.device).double()
+        if kp_att is None:
+            self.kp_att = torch.tensor([544], device=device).repeat(num_drones, 1).double()
+        else:
+            self.kp_att = kp_att.to(self.device).double()
+            if len(self.kp_att.shape) < 2:
+                self.kp_att = self.kp_att.unsqueeze(-1)
+        if kd_att is None:
+            self.kd_att = torch.tensor([46.64], device=device).repeat(num_drones, 1).double()
+        else:
+            self.kd_att = kd_att.to(self.device).double()
+            if len(self.kd_att.shape) < 2:
+                self.kd_att = self.kd_att.unsqueeze(-1)
+
+        self.kp_vel = 0.1 * self.kp_pos
+
+    def normalize(self, x):
+        return x / torch.norm(x, dim=-1, keepdim=True)
+
+    def update(self, t, states, flat_outputs, idxs=None):
+        '''
+        Computes a batch of control outputs for the drones specified by idxs
+        :param states: a dictionary of pytorch tensors containing the states of the quadrotors (expects double precision)
+        :param flat_outputs: a dictionary of pytorch tensors containing the reference trajectories for each quad. (expects double precision)
+        :param idxs: a list of which drones to update
+        :return:
+        '''
+        if idxs is None:
+            idxs = [i for i in range(states['x'].shape[0])]
+        pos_err = states['x'][idxs].double() - flat_outputs['x'][idxs].double()
+        dpos_err = states['v'][idxs].double() - flat_outputs['x_dot'][idxs].double()
+
+        F_des = self.params.mass[idxs] * (-self.kp_pos[idxs] * pos_err
+                             - self.kd_pos[idxs] * dpos_err
+                             + flat_outputs['x_ddot'][idxs].double()
+                             + torch.tensor([0, 0, self.params.g], device=self.device))
+
+
+        R = roma.unitquat_to_rotmat(states['q'][idxs]).double()
+        b3 = R @ torch.tensor([0.0, 0.0, 1.0], device=self.device).double()
+        u1 = torch.sum(F_des * b3, dim=-1).double()
+
+        b3_des = self.normalize(F_des)
+        yaw_des = flat_outputs['yaw'][idxs].double()
+        c1_des = torch.stack([torch.cos(yaw_des), torch.sin(yaw_des), torch.zeros_like(yaw_des)], dim=-1)
+        b2_des = self.normalize(torch.cross(b3_des, c1_des, dim=-1))
+        b1_des = torch.cross(b2_des, b3_des, dim=-1)
+        R_des = torch.stack([b1_des, b2_des, b3_des], dim=-1)
+
+        S_err = 0.5 * (R_des.transpose(-1, -2) @ R - R.transpose(-1, -2) @ R_des)
+        att_err = torch.stack([-S_err[:, 1, 2], S_err[:, 0, 2], -S_err[:, 0, 1]], dim=-1)
+
+        w_des = torch.stack([torch.zeros_like(yaw_des), torch.zeros_like(yaw_des), flat_outputs['yaw_dot'][idxs].double()], dim=-1).to(self.device)
+        w_err = states['w'][idxs].double()- w_des
+
+        Iw = self.params.inertia[idxs] @ states['w'][idxs].unsqueeze(-1).double()
+        tmp = -self.kp_att[idxs] * att_err - self.kd_att[idxs] * w_err
+        u2 = (self.params.inertia[idxs] @ tmp.unsqueeze(-1)).squeeze(-1) + torch.cross(states['w'][idxs].double(), Iw.squeeze(-1), dim=-1)
+
+        TM = torch.cat([u1.unsqueeze(-1), u2], dim=-1)
+        cmd_rotor_thrusts = (self.params.TM_to_f[idxs] @ TM.unsqueeze(1).transpose(-1, -2)).squeeze(-1)
+        cmd_motor_speeds = cmd_rotor_thrusts / self.params.k_eta[idxs]
+        cmd_motor_speeds = torch.sign(cmd_motor_speeds) * torch.sqrt(torch.abs(cmd_motor_speeds))
+
+        cmd_q = roma.rotmat_to_unitquat(R_des)
+        cmd_v = -self.kp_vel[idxs] * pos_err + flat_outputs['x_dot'][idxs].double()
+
+        control_inputs = BatchedSE3Control._unpack_control(cmd_motor_speeds,
+                                                           cmd_rotor_thrusts,
+                                                           u1.unsqueeze(-1),
+                                                           u2,
+                                                           cmd_q,
+                                                           -self.kp_att[idxs] * att_err - self.kd_att[idxs] * w_err,
+                                                           cmd_v,
+                                                           F_des/self.params.mass[idxs],
+                                                           idxs,
+                                                           states['x'].shape[0])
+
+        return control_inputs
+
+    @classmethod
+    def _unpack_control(cls, cmd_motor_speeds, cmd_motor_thrusts,
+                        u1, u2, cmd_q, cmd_w, cmd_v, cmd_acc, idxs, num_drones):
+        device = cmd_motor_speeds.device
+        # fill state with zeros, then replace with appropriate indexes.
+        ctrl = {'cmd_motor_speeds': torch.zeros(num_drones, 4, dtype=torch.double, device=device),
+                'cmd_motor_thrusts': torch.zeros(num_drones, 4, dtype=torch.double, device=device),
+                 'cmd_thrust': torch.zeros(num_drones, 1, dtype=torch.double, device=device),
+                 'cmd_moment': torch.zeros(num_drones, 3, dtype=torch.double, device=device),
+                 'cmd_q': torch.zeros(num_drones, 4, dtype=torch.double, device=device),
+                 'cmd_w': torch.zeros(num_drones, 3, dtype=torch.double, device=device),
+                 'cmd_v': torch.zeros(num_drones, 3, dtype=torch.double, device=device),
+                 'cmd_acc': torch.zeros(num_drones, 3, dtype=torch.double, device=device)}
+
+        ctrl['cmd_motor_speeds'][idxs] = cmd_motor_speeds
+        ctrl['cmd_motor_thrusts'][idxs] = cmd_motor_thrusts
+        ctrl['cmd_thrust'][idxs] = u1
+        ctrl['cmd_moment'][idxs] = u2
+        ctrl['cmd_q'][idxs] = cmd_q
+        ctrl['cmd_w'][idxs] = cmd_w
+        ctrl['cmd_v'][idxs] = cmd_v
+        ctrl['cmd_acc'][idxs] = cmd_acc
+        return ctrl

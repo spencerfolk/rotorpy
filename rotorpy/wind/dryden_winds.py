@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 import os
 import sys
 
@@ -44,6 +45,26 @@ class DrydenGust(object):
         """
         return self.wind.getWind(self.dt)
 
+
+class BatchedDrydenGust(object):
+    def __init__(self, dt=1/500, avg_wind=torch.tensor([0, 0, 0]), sig_wind=torch.tensor([1, 1, 1]), altitude=2.0, device='cpu'):
+        """
+        Inputs:
+            dt := time discretization, s, should match the simulator
+            avg_wind := mean windspeed on each axis, m/s
+            sig_wind := turbulence intensity in windspeed on each axis, m/s
+            altitude := expected operating altitude
+        """
+        self.dt = dt
+        self.wind = BatchedDrydenWind(avg_wind, sig_wind, altitude, device)
+
+    def update(self, t, position):
+        """
+        Given the present time and position of the multirotor, return the current wind speed on all three axes.
+        The wind should be expressed in the world coordinates.
+        """
+        return self.wind.get_wind(self.dt)
+
 class DrydenGustLP(object):
     """
     This is another wrapper on an existing external package: https://github.com/goromal/wind-dynamics 
@@ -83,3 +104,51 @@ class DrydenGustLP(object):
         wind = (1-self.dt/self.tau)*self.prev_wind + self.dt/self.tau*self.wind.getWind(self.dt)
         self.prev_wind = wind
         return wind
+
+class DrydenGustLP:
+    def __init__(self, dt=1/500, avg_wind=torch.tensor([0, 0, 0]), sig_wind=torch.tensor([1, 1, 1]), altitude=2.0, tau=0.1, device='cpu'):
+        """
+        Inputs:
+            dt := time discretization, s, should match the simulator
+            avg_wind := mean windspeed on each axis, m/s
+            sig_wind := turbulence intensity (denoted sigma) in windspeed on each axis, m/s
+            altitude := expected operating altitude
+            tau      := cutoff frequency of the low pass filter (s)
+        """
+        self.dt = dt
+        self.tau = tau
+        self.wind = BatchedDrydenWind(avg_wind, sig_wind, altitude, device)
+        self.prev_wind = self.wind.get_wind(self.dt)
+
+    def update(self, t, position):
+        """
+        Given the present time and position of the multirotor, return the current wind speed on all three axes.
+        The wind should be expressed in the world coordinates.
+        """
+        wind = (1 - self.dt / self.tau) * self.prev_wind + (self.dt / self.tau) * self.wind.get_wind(self.dt)
+        self.prev_wind = wind
+        return wind
+
+if __name__ == "__main__":
+
+    dt = 1 / 500
+    avg_wind = torch.tensor([[5.0, 1.3, 0.5]])  # Mean wind speed (m/s)
+    sig_wind = torch.tensor([[0.0, 0.0, 0.0]])  # Wind turbulence (m/s)
+    altitude = 2.0  # Altitude (m)
+
+    # Normal model
+    dryden_gust = DrydenGust(dt=dt, avg_wind=avg_wind.numpy().squeeze(), sig_wind=sig_wind.numpy().squeeze(), altitude=altitude)
+
+    # Batched model
+    batched_dryden_gust = BatchedDrydenGust(dt=dt, avg_wind=avg_wind, sig_wind=sig_wind, altitude=altitude, device='cpu')
+
+    t = 0.0 
+    position = np.array([0.0, 0.0, 0.0])
+
+    # Test DrydenGust (non-batched)
+    wind_non_batched = dryden_gust.update(t, position)
+    print("Wind (non-batched DrydenGust):", wind_non_batched)
+
+    # Test BatchedDrydenGust (batched)
+    wind_batched = batched_dryden_gust.update(t, position)
+    print("Wind (batched BatchedDrydenGust):", wind_batched)

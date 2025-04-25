@@ -71,8 +71,8 @@ def test_minsnap_traj():
 
     print("\nTesting MinSnap class input and output signatures")
     # Create an instance of the MinSnap class
-    min_snap = MinSnap(points=np.random.rand(2, 3), 
-                       yaw_angles=np.random.rand(2), 
+    min_snap = MinSnap(points=np.array([[0, 0, 0], [1, 2, 4], [3, 5, 2]]), 
+                       yaw_angles=np.array([0, np.pi/4, np.pi/2]), 
                        yaw_rate_max=2*np.pi, 
                        poly_degree=7, 
                        yaw_poly_degree=7, 

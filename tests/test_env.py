@@ -7,7 +7,7 @@ from rotorpy.vehicles.multirotor import Multirotor
 from rotorpy.vehicles.crazyflie_params import quad_params
 from rotorpy.controllers.quadrotor_control import SE3Control
 from rotorpy.trajectories.hover_traj import HoverTraj
-from rotorpy.trajectories.circular_traj import CircularTraj, ThreeDCircularTraj
+from rotorpy.trajectories.circular_traj import ThreeDCircularTraj
 from rotorpy.trajectories.lissajous_traj import TwoDLissajous
 from rotorpy.trajectories.speed_traj import ConstantSpeed
 from rotorpy.trajectories.minsnap import MinSnap
@@ -19,7 +19,9 @@ from rotorpy.sensors.external_mocap import MotionCapture
 from rotorpy.world import World
 from rotorpy.utils.postprocessing import unpack_sim_data
 
-import numpy as np                  
+import numpy as np     
+import matplotlib
+matplotlib.use('Agg')  # use non-interactive backend for test            
 import matplotlib.pyplot as plt     
 from scipy.spatial.transform import Rotation 
 import os
@@ -75,3 +77,5 @@ def test_basic_env():
     # Instead of producing a CSV, you can manually unpack the dictionary into a Pandas DataFrame using the following:
     print("\tUnpacking simulation data...") 
     dataframe = unpack_sim_data(results)
+
+    plt.close('all')
