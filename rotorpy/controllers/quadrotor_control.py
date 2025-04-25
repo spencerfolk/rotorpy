@@ -224,19 +224,19 @@ class BatchedSE3Control(object):
     def update(self, t, states, flat_outputs, idxs=None):
         '''
         Computes a batch of control outputs for the drones specified by idxs
-        :param states: a dictionary of pytorch tensors containing the states of the quadrotors
-        :param flat_outputs: a dictionary of pytorch tensors containing the reference trajectories for each quad.
+        :param states: a dictionary of pytorch tensors containing the states of the quadrotors (expects double precision)
+        :param flat_outputs: a dictionary of pytorch tensors containing the reference trajectories for each quad. (expects double precision)
         :param idxs: a list of which drones to update
         :return:
         '''
         if idxs is None:
             idxs = [i for i in range(states['x'].shape[0])]
-        pos_err = states['x'][idxs].double() - flat_outputs['x'][idxs]
-        dpos_err = states['v'][idxs].double() - flat_outputs['x_dot'][idxs]
+        pos_err = states['x'][idxs].double() - flat_outputs['x'][idxs].double()
+        dpos_err = states['v'][idxs].double() - flat_outputs['x_dot'][idxs].double()
 
         F_des = self.params.mass[idxs] * (-self.kp_pos[idxs] * pos_err
                              - self.kd_pos[idxs] * dpos_err
-                             + flat_outputs['x_ddot'][idxs]
+                             + flat_outputs['x_ddot'][idxs].double()
                              + torch.tensor([0, 0, self.params.g], device=self.device))
 
 
@@ -245,7 +245,7 @@ class BatchedSE3Control(object):
         u1 = torch.sum(F_des * b3, dim=-1).double()
 
         b3_des = self.normalize(F_des)
-        yaw_des = flat_outputs['yaw'][idxs]
+        yaw_des = flat_outputs['yaw'][idxs].double()
         c1_des = torch.stack([torch.cos(yaw_des), torch.sin(yaw_des), torch.zeros_like(yaw_des)], dim=-1)
         b2_des = self.normalize(torch.cross(b3_des, c1_des, dim=-1))
         b1_des = torch.cross(b2_des, b3_des, dim=-1)
@@ -254,12 +254,12 @@ class BatchedSE3Control(object):
         S_err = 0.5 * (R_des.transpose(-1, -2) @ R - R.transpose(-1, -2) @ R_des)
         att_err = torch.stack([-S_err[:, 1, 2], S_err[:, 0, 2], -S_err[:, 0, 1]], dim=-1)
 
-        w_des = torch.stack([torch.zeros_like(yaw_des), torch.zeros_like(yaw_des), flat_outputs['yaw_dot'][idxs]], dim=-1).to(self.device)
-        w_err = states['w'][idxs] - w_des
+        w_des = torch.stack([torch.zeros_like(yaw_des), torch.zeros_like(yaw_des), flat_outputs['yaw_dot'][idxs].double()], dim=-1).to(self.device)
+        w_err = states['w'][idxs].double()- w_des
 
         Iw = self.params.inertia[idxs] @ states['w'][idxs].unsqueeze(-1).double()
         tmp = -self.kp_att[idxs] * att_err - self.kd_att[idxs] * w_err
-        u2 = (self.params.inertia[idxs] @ tmp.unsqueeze(-1)).squeeze(-1) + torch.cross(states['w'][idxs], Iw.squeeze(-1), dim=-1)
+        u2 = (self.params.inertia[idxs] @ tmp.unsqueeze(-1)).squeeze(-1) + torch.cross(states['w'][idxs].double(), Iw.squeeze(-1), dim=-1)
 
         TM = torch.cat([u1.unsqueeze(-1), u2], dim=-1)
         cmd_rotor_thrusts = (self.params.TM_to_f[idxs] @ TM.unsqueeze(1).transpose(-1, -2)).squeeze(-1)
@@ -267,7 +267,7 @@ class BatchedSE3Control(object):
         cmd_motor_speeds = torch.sign(cmd_motor_speeds) * torch.sqrt(torch.abs(cmd_motor_speeds))
 
         cmd_q = roma.rotmat_to_unitquat(R_des)
-        cmd_v = -self.kp_vel[idxs] * pos_err + flat_outputs['x_dot'][idxs]
+        cmd_v = -self.kp_vel[idxs] * pos_err + flat_outputs['x_dot'][idxs].double()
 
         control_inputs = BatchedSE3Control._unpack_control(cmd_motor_speeds,
                                                            cmd_rotor_thrusts,
