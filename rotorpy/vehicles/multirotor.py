@@ -691,7 +691,8 @@ class BatchedMultirotor(object):
         batched_params: BatchedMultirotorParams object, containing relevant physical parameters for the multirotor.
         num_drones: the number of drones in the batch.
         initial_states: the initial state of the vehicle. Contains the same keys as "initial_states" of `Multirotor`, but each 
-                                value is a pytorch tensor with a prepended batch dimension. e.g. initial_states['x'].shape = (num_drones, 3) 
+                                value is a pytorch tensor with a prepended batch dimension. e.g. initial_states['x'].shape = (num_drones, 3).
+                                To maintain fidelity during the simulation, the expected datatype for the tensors is double.
         control_abstraction: the appropriate control abstraction that is used by the controller, options are...
                                 'cmd_motor_speeds': the controller directly commands motor speeds.
                                 'cmd_motor_thrusts': the controller commands forces for each rotor.
@@ -734,6 +735,9 @@ class BatchedMultirotor(object):
     def statedot(self, state, control, t_step, idxs):
         """
         Integrate dynamics forward from state given constant cmd_rotor_speeds for time t_step.
+        Returns:
+            vdot: torch.tensor of shape (num_drones, 3), with zeros for drones not in idxs
+            wdot: torch.tensor of shape (num_drones, 3), with zeros for drones not in idxs
         """
 
         cmd_rotor_speeds = self.get_cmd_motor_speeds(state, control, idxs)
@@ -748,9 +752,11 @@ class BatchedMultirotor(object):
 
         s = BatchedMultirotor._pack_state(state, self.num_drones, self.device)
 
-        s_dot = s_dot_fn(0, s)
-        v_dot = s_dot[..., 3:6]
-        w_dot = s_dot[..., 10:13]
+        s_dot = s_dot_fn(0, s[idxs])
+        v_dot = torch.zeros_like(state["v"])
+        w_dot = torch.zeros_like(state["w"])
+        v_dot[idxs] = s_dot[..., 3:6].double()
+        w_dot[idxs] = s_dot[..., 10:13].double()
 
         state_dot = {'vdot': v_dot, 'wdot': w_dot}
         return state_dot
@@ -758,7 +764,11 @@ class BatchedMultirotor(object):
     def step(self, state, control, t_step, idxs=None):
         """
         Integrate dynamics forward from state given constant control for time t_step.
-        idxs: integer array of shape (num_running_drones, )
+        Params:
+            - state: dictionary containing keys ['x', 'v', 'q', 'w', 'wind', 'rotor_speeds'], and values which are pytorch tensors with dtype double and which have a batch dimension
+            - control: dictionary with keys depending on the chosen control mode. Values are torch tensors, again with dtype double and with a batch dimension equal to the number of drones.
+            - t_step: float, the duration for which to step the simulation.
+            - idxs: integer array of shape (num_running_drones, )
         """
         if idxs is None:
             idxs = [i for i in range(self.num_drones)]

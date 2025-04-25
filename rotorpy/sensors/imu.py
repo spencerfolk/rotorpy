@@ -140,44 +140,48 @@ class BatchedImu:
         self.sampling_rate = sampling_rate
         self.rate_scale = (sampling_rate / 2) ** 0.5
 
-        self.R_BS = torch.eye(3, device=device) if R_BS is None else R_BS.to(device)
-        self.p_BS = torch.zeros(3, device=device) if p_BS is None else p_BS.to(device)
-        self.gravity_vector = torch.tensor([0, 0, -9.81], device=device) if gravity_vector is None else gravity_vector.to(device)
+        self.R_BS = torch.eye(3, device=device).double() if R_BS is None else R_BS.double().to(device)
+        self.p_BS = torch.zeros(3, device=device).double() if p_BS is None else p_BS.double().to(device)
+        self.gravity_vector = torch.tensor([0, 0, -9.81], device=device, dtype=torch.double) if gravity_vector is None else gravity_vector.double().to(device)
 
         accel_params = accelerometer_params or {
-            'initial_bias': torch.zeros(3, device=device),
-            'noise_density': (0.38 ** 2) * torch.ones(3, device=device),
-            'random_walk': torch.zeros(3, device=device)
+            'initial_bias': torch.zeros(3, device=device).double(),
+            'noise_density': (0.38 ** 2) * torch.ones(3, device=device).double(),
+            'random_walk': torch.zeros(3, device=device).double()
         }
 
         gyro_params = gyroscope_params or {
-            'initial_bias': torch.zeros(3, device=device),
-            'noise_density': (0.01 ** 2) * torch.ones(3, device=device),
-            'random_walk': torch.zeros(3, device=device)
+            'initial_bias': torch.zeros(3, device=device).double(),
+            'noise_density': (0.01 ** 2) * torch.ones(3, device=device).double(),
+            'random_walk': torch.zeros(3, device=device).double()
         }
 
         # Repeat biases for each drone
-        self.accel_bias = torch.Tensor(accel_params['initial_bias'][np.newaxis].repeat(num_drones, 1))
-        self.gyro_bias = torch.Tensor(gyro_params['initial_bias'][np.newaxis].repeat(num_drones, 1))
-        self.accel_noise = torch.Tensor(accel_params['noise_density'])
-        self.gyro_noise = torch.Tensor(gyro_params['noise_density'])
-        self.accel_random_walk = torch.Tensor(accel_params['random_walk'])
-        self.gyro_random_walk = torch.Tensor(gyro_params['random_walk'])
+        self.accel_bias = torch.Tensor(accel_params['initial_bias'][np.newaxis].repeat(num_drones, 1)).double()
+        self.gyro_bias = torch.Tensor(gyro_params['initial_bias'][np.newaxis].repeat(num_drones, 1)).double()
+        self.accel_noise = torch.Tensor(accel_params['noise_density']).double()
+        self.gyro_noise = torch.Tensor(gyro_params['noise_density']).double()
+        self.accel_random_walk = torch.Tensor(accel_params['random_walk']).double()
+        self.gyro_random_walk = torch.Tensor(gyro_params['random_walk']).double()
 
     def bias_step(self):
         self.accel_bias += torch.randn_like(self.accel_bias) * (self.accel_random_walk / self.rate_scale)
         self.gyro_bias += torch.randn_like(self.gyro_bias) * (self.gyro_random_walk / self.rate_scale)
 
-    def measurement(self, state, acceleration, with_noise=True):
+    def measurement(self, state, acceleration, idxs=None, with_noise=True):
         """
         state['x'], ['v'], ['w']: (num_drones, 3)
         state['q']: (num_drones, 4) (xyzw format)
         acceleration['vdot'], ['wdot']: (B, 3)
+        idxs: list of drones in the batch for which to compute IMU measurements.
         """
-        q_WB = state['q']  # (num_drones, 4)
-        w_WB = state['w']
-        alpha_WB_W = acceleration['wdot']
-        a_WB_W = acceleration['vdot']
+        if idxs is None:
+            idxs = [i for i in range(self.num_drones)]
+
+        q_WB = state['q'][idxs]  # (num_drones, 4)
+        w_WB = state['w'][idxs]
+        alpha_WB_W = acceleration['wdot'][idxs]
+        a_WB_W = acceleration['vdot'][idxs]
 
         # Get rotation matrices from quaternions (num_drones, 3, 3)
         R_WB = self.quat_to_rotmat(q_WB)
@@ -195,21 +199,26 @@ class BatchedImu:
 
         # Apply bias + noise
         self.bias_step()
-        a_meas = a_WS_S + self.accel_bias
-        w_meas = w_WB + self.gyro_bias
+        a_meas = a_WS_S + self.accel_bias[idxs]
+        w_meas = w_WB + self.gyro_bias[idxs]
 
         if with_noise:
             a_meas += self.rate_scale * torch.randn_like(a_meas) * self.accel_noise
             w_meas += self.rate_scale * torch.randn_like(w_meas) * self.gyro_noise
 
-        return {'accel': a_meas, 'gyro': w_meas}
+        a_meas_out = torch.full((self.num_drones, 3), float("nan"), device=a_meas.device).double()
+        w_meas_out = torch.full((self.num_drones, 3), float("nan"), device=w_meas.device).double()
+        a_meas_out[idxs] = a_meas
+        w_meas_out[idxs] = w_meas
+
+        return {'accel': a_meas_out, 'gyro': w_meas_out}
 
     @staticmethod
     def quat_to_rotmat(q):
         # Input shape (B, 4) in xyzw
         x, y, z, w = q[:, 0], q[:, 1], q[:, 2], q[:, 3]
         B = q.shape[0]
-        R = torch.empty((B, 3, 3), device=q.device)
+        R = torch.empty((B, 3, 3), device=q.device, dtype=torch.double)
         R[:, 0, 0] = 1 - 2*(y**2 + z**2)
         R[:, 0, 1] = 2*(x*y - z*w)
         R[:, 0, 2] = 2*(x*z + y*w)

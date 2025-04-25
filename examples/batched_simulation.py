@@ -12,7 +12,7 @@ from rotorpy.utils.trajgen_utils import generate_random_minsnap_traj
 from rotorpy.world import World
 from rotorpy.wind.default_winds import NoWind, BatchedNoWind
 from rotorpy.simulate import simulate, simulate_batch
-from rotorpy.sensors.imu import Imu
+from rotorpy.sensors.imu import Imu, BatchedImu
 from rotorpy.sensors.external_mocap import MotionCapture
 from rotorpy.estimators.nullestimator import NullEstimator
 
@@ -111,9 +111,12 @@ def main():
     # Define a wind profile -- for batched drones, only NoWind and ConstantWind are supported rn.
     wind_profile = BatchedNoWind(num_drones)
 
+    # Define a BatchedIMU object, which simulates noisy IMU measurements
+    batched_imu = BatchedImu(num_drones, device=device)
+
     # Call the simulate_batch function, which will simulate all drones using the vectorized dynamics.
     sim_fn_start_time = time.time()
-    results = simulate_batch(world, x0, vehicle, controller, batched_trajs, wind_profile, t_fs, dt, 0.25, print_fps=False)
+    results = simulate_batch(world, x0, vehicle, controller, batched_trajs, wind_profile, batched_imu, t_fs, dt, 0.25, print_fps=False)
     sim_fn_end_time = time.time()
     print(f"time to simulate {num_drones} batched using simulate_batch() fn: {sim_fn_end_time - sim_fn_start_time}")
 

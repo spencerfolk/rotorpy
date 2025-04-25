@@ -228,6 +228,7 @@ def simulate_batch(world,
                    controller: BatchedSE3Control,
                    trajectories,
                    wind_profile,
+                   imu,
                    t_final,
                    t_step,
                    safety_margin,
@@ -237,7 +238,7 @@ def simulate_batch(world,
     """
     Simultaneously performs many vehicle simulations and returns the numerical results.
     Note that, currently, compared to the normal simulate() function, simulate_batch() does not support
-    IMU measurements, mocap, or the state estimator. See examples/batched_simulation.py for usage.
+    mocap, or the state estimator. See examples/batched_simulation.py for usage.
 
     Inputs:
         world, a class representing the world it is flying in, including objects and world bounds.
@@ -246,6 +247,7 @@ def simulate_batch(world,
         controller, BatchedController object containing the controller
         trajectories, BatchedTrajectory object containing the trajectories to follow
         wind_profile, Batched Wind Profile object containing the wind generator.
+        imu: BatchedIMU object
         t_final, array of maximum simulation durations for each vehicle in the batch, s
         t_step, float, the time between each step in the simulator, s (shared across drones)
         safety_margin, the radius of the ball surrounding the vehicle position to determine if a collision occurs
@@ -282,8 +284,8 @@ def simulate_batch(world,
             yaw_dot,  yaw rate, rad/s
         exit_status, an array of ExitStatus enums indicating the reason for termination for each drone.
         exit_timesteps, an array indicating at which timestep each vehicle in the batch terminated, shape = (B).
-            For efficiency, if drone i terminates at timestep n < N, the outputs in 'state', 'control', and 'flat'
-            for that drone for all subsequent timesteps will be zero. 'exit_timesteps' contains the value n for each drone in the batch.
+            For efficiency, if drone i terminates at timestep n < N, the outputs in 'state', 'control', 'imu', 'imu_gt', and 'flat'
+            for that drone for all subsequent timesteps will be NaN. 'exit_timesteps' contains the value n for each drone in the batch.
     """
 
     assert(torch.is_tensor(initial_states[k]) for k in initial_states.keys())
@@ -312,6 +314,9 @@ def simulate_batch(world,
     state   = [copy.deepcopy(initial_states)]
     flat    = [trajectories.update(time_array[-1])]
     control = [controller.update(time_array[-1], state[-1], flat[-1], idxs=None)]
+    statedot = vehicles.statedot(state[-1], control[-1], t_step, running_idxs.flatten())
+    imu_measurements = [imu.measurement(state[-1], statedot, with_noise=True)]
+    imu_gt = [imu.measurement(state[-1], statedot, with_noise=False)]
     step = 0
     total_num_frames = 0
     total_time = 0
@@ -340,6 +345,10 @@ def simulate_batch(world,
         state.append(vehicles.step(state[-1], control[-1], t_step, idxs=running_idxs.flatten()))
         flat.append(trajectories.update(time_array[-1]))
         control.append(controller.update(time_array[-1], state[-1], flat[-1], idxs=running_idxs.flatten()))
+
+        statedot = vehicles.statedot(state[-1], control[-1], t_step, running_idxs.flatten())
+        imu_measurements.append(imu.measurement(state[-1], statedot, running_idxs.flatten(), with_noise=True))
+        imu_gt.append(imu.measurement(state[-1], statedot, running_idxs.flatten(), with_noise=False))
         step += 1
         fps = len(running_idxs) / (time.time() - step_start_time)
         total_time += time.time() - step_start_time
@@ -352,7 +361,7 @@ def simulate_batch(world,
     state   = merge_dicts_batch(state)
     control         = merge_dicts_batch(control)
     flat            = merge_dicts_batch(flat)
-    return (time_array, state, control, flat, exit_status, exit_timesteps)
+    return (time_array, state, control, flat, imu_measurements, imu_gt, exit_status, exit_timesteps)
 
 
 def merge_dicts_batch(dicts_in):

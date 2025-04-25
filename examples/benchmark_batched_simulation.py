@@ -19,6 +19,7 @@ from rotorpy.simulate import simulate, simulate_batch
 from rotorpy.sensors.imu import Imu
 from rotorpy.sensors.external_mocap import MotionCapture
 from rotorpy.estimators.nullestimator import NullEstimator
+from rotorpy.sensors.imu import BatchedImu
 
 INIT_ROTOR_SPEED = 1788.53
 
@@ -118,9 +119,10 @@ def main():
         t_fs = np.array([trajectory.t_keyframes[-1] for trajectory in trajectories])
         batched_traj = BatchedMinSnap(trajectories, device=device)
         wind_profile = BatchedNoWind(batch_size)
+        batched_imu = BatchedImu(batch_size, device=device)
 
         start_time = time.time()
-        results = simulate_batch(world, initial_states, vehicle, controller, batched_traj, wind_profile, t_fs, sim_dt, 0.25, print_fps=False)
+        results = simulate_batch(world, initial_states, vehicle, controller, batched_traj, wind_profile, batched_imu, t_fs, sim_dt, 0.25, print_fps=False)
         cpu_ram_usage.append(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024)
         print(f"Peak memory usage so far = {cpu_ram_usage[-1]} mb")
         total_frames = np.sum(results[-1])  # sum the timesteps at which each drone finished.
@@ -143,9 +145,10 @@ def main():
             t_fs = np.array([trajectory.t_keyframes[-1] for trajectory in trajectories])
             batched_traj = BatchedMinSnap(trajectories, device=device)
             wind_profile = BatchedNoWind(batch_size)
+            batched_imu = BatchedImu(batch_size, device=device)
 
             start_time = time.time()
-            results = simulate_batch(world, initial_states, vehicle, controller, batched_traj, wind_profile, t_fs, sim_dt, 0.25, print_fps=False)
+            results = simulate_batch(world, initial_states, vehicle, controller, batched_traj, wind_profile, batched_imu, t_fs, sim_dt, 0.25, print_fps=False)
             total_frames = np.sum(results[-1])  # sum the timesteps at which each drone finished.
             done_time = time.time() - start_time
             gpu_fps.append(total_frames/done_time)
@@ -153,25 +156,25 @@ def main():
             print(f"For batch size {batch_size}, GPU FPS = {total_frames/done_time}")
 
     fig, ax = plt.subplots(1, 3, figsize=(9, 3))
-    ax[0].plot(batch_sizes, cpu_fps, label="CPU")
+    ax[0].plot(batch_sizes, cpu_fps, label="CPU", linestyle='--', marker='o', c='blue', linewidth=3)
     if len(gpu_fps) > 0:
-        ax[0].plot(batch_sizes, gpu_fps, label="GPU")
-    ax[0].axhline(seq_fps, linestyle="--", label="Sequential")
-    ax[0].set_title(f"Batch Size vs. Obtained FPS with integrator {integrator}")
+        ax[0].plot(batch_sizes, gpu_fps, label="GPU", linestyle='--', marker='*', c='blue', linewidth=3)
+    ax[0].axhline(seq_fps, linestyle="--", label="Sequential", marker='v', linewidth=3)
+    ax[0].set_title(f"Batch Size vs. Obtained FPS \n with {integrator}", fontsize=10)
     ax[0].set_xlabel("Batch Size")
-    ax[0].set_ylabel("FPS")
+    ax[0].set_ylabel("Frames per Second")
     ax[0].legend()
 
-    ax[1].plot(batch_sizes, cpu_times, label="CPU")
+    ax[1].plot(batch_sizes, cpu_times, label="CPU", linestyle='--', marker='o', c='blue', linewidth=3)
     if len(gpu_times) > 0:
-        ax[1].plot(batch_sizes, gpu_times, label="GPU")
-    ax[1].set_title(f"Batch Size vs. Wall-Clock Time with integrator {integrator}")
+        ax[1].plot(batch_sizes, gpu_times, label="GPU", linestyle='--', marker='*', c='blue', linewidth=3)
+    ax[1].set_title(f"Batch Size vs. Wall-Clock Time \n with {integrator}", fontsize=10)
     ax[1].set_xlabel("Batch Size")
-    ax[1].set_ylabel("Time Taken")
+    ax[1].set_ylabel("Time Taken (s)")
     ax[1].legend()
 
-    ax[2].plot([1] + batch_sizes, cpu_ram_usage)
-    ax[2].set_title("Batch Size vs. CPU RAM Usage")
+    ax[2].plot([1] + batch_sizes, cpu_ram_usage, linestyle='--', marker='o', c='blue')
+    ax[2].set_title("Batch Size vs. CPU RAM Usage", fontsize=10)
     ax[2].set_ylabel("RAM used (MB)")
     ax[2].set_xlabel("Batch Size")
     fig.tight_layout()
