@@ -156,24 +156,26 @@ def main():
             print(f"For batch size {batch_size}, GPU FPS = {total_frames/done_time}")
 
     fig, ax = plt.subplots(1, 3, figsize=(9, 3))
-    ax[0].plot(batch_sizes, cpu_fps, label="CPU", linestyle='--', marker='o', c='blue', linewidth=3)
+    linewidth = 3
+    markersize= 7
+    ax[0].plot(batch_sizes, cpu_fps, label="CPU", linestyle='--', marker='o', c='blue', linewidth=linewidth, markersize=markersize)
     if len(gpu_fps) > 0:
-        ax[0].plot(batch_sizes, gpu_fps, label="GPU", linestyle='--', marker='*', c='blue', linewidth=3)
-    ax[0].axhline(seq_fps, linestyle="--", label="Sequential", marker='v', linewidth=3)
+        ax[0].plot(batch_sizes, gpu_fps, label="GPU", linestyle='--', marker='*', c='green', linewidth=linewidth, markersize=markersize)
+    ax[0].axhline(seq_fps, linestyle="--", label="Sequential", marker='v', linewidth=linewidth, markersize=markersize)
     ax[0].set_title(f"Batch Size vs. Obtained FPS \n with {integrator}", fontsize=10)
     ax[0].set_xlabel("Batch Size")
     ax[0].set_ylabel("Frames per Second")
     ax[0].legend()
 
-    ax[1].plot(batch_sizes, cpu_times, label="CPU", linestyle='--', marker='o', c='blue', linewidth=3)
+    ax[1].plot(batch_sizes, cpu_times, label="CPU", linestyle='--', marker='o', c='blue', linewidth=linewidth, markersize=markersize)
     if len(gpu_times) > 0:
-        ax[1].plot(batch_sizes, gpu_times, label="GPU", linestyle='--', marker='*', c='blue', linewidth=3)
+        ax[1].plot(batch_sizes, gpu_times, label="GPU", linestyle='--', marker='*', c='green', linewidth=linewidth, markersize=markersize)
     ax[1].set_title(f"Batch Size vs. Wall-Clock Time \n with {integrator}", fontsize=10)
     ax[1].set_xlabel("Batch Size")
     ax[1].set_ylabel("Time Taken (s)")
     ax[1].legend()
 
-    ax[2].plot([1] + batch_sizes, cpu_ram_usage, linestyle='--', marker='o', c='blue')
+    ax[2].plot([1] + batch_sizes, cpu_ram_usage, linestyle='--', marker='o', c='blue', linewidth=linewidth, markersize=markersize)
     ax[2].set_title("Batch Size vs. CPU RAM Usage", fontsize=10)
     ax[2].set_ylabel("RAM used (MB)")
     ax[2].set_xlabel("Batch Size")

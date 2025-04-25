@@ -2,9 +2,9 @@
 A Python-based multirotor simulation environment with aerodynamic wrenches, useful for education and research in estimation, planning, and control for UAVs.
 <p align="center"><img src="/media/double_pillar.gif" width="32%"/><img src="/media/gusty.gif" width="32%"/><img src="/media/minsnap.gif" width="32%"/></p>
 
-**NEW in `v2.0`**: RotorPy now includes a batched environment which can simulate multiple drones in parallel on CPU or GPU. For simulations of >1000 drones, the speedup can be up to 60x purely on CPU compared to simulating all drones sequentially. We have also implemented batched versions of existing control, trajectory, and wind classes. See `examples/batched_simulation.py` for how to use the new batched simulation, and `examples/benchmark_batched_simulation.py` to measure the speedup on your own system.
+**NEW in `v2.0`**: RotorPy now includes a batched environment which can simulate multiple drones in parallel on CPU or GPU. For simulations of >1000 drones, we have observed speedups of 25x purely on CPU compared to simulating all drones sequentially. We have also implemented batched versions of existing control, trajectory, and wind classes. See `examples/batched_simulation.py` for how to use the new batched simulation, and `examples/benchmark_batched_simulation.py` to measure the speedup on your own system.
 
-TODO: include a plot of the speedup here.
+<img src = "/media/batched_simulation_performance.png"/>
 
 We have also updated the Gymnasium environment in `rotorpy/learning/` to use the batched dynamics, allowing faster RL training by simulating multiple vehicles in parallel with domain randomization. Running `examples/ppo_hover_train.py` produces a functional hovering policy in about 5 million simulation timesteps, which takes under 4 minutes of wall clock time on a MacBook Air M3. (Note: This script acts as a good starting point, but for sim2real, more careful reward engineering, domain randomization, and hyperparameter tuning will be necessary.)
 
