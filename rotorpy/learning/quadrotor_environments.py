@@ -26,10 +26,10 @@ DEFAULT_RESET_OPTIONS = {'initial_states': 'random', 'pos_bound': 2, 'vel_bound'
 
 def _minmax_scale(x, min_values, max_values):
     '''
-    Scales an array of values from
-    x: np.ndarray of shape (num_envs,...) or int
-    min_values: np.ndarray of shape (num_envs,...) or int
-    max_values: np.ndarray of shape (num_envs,...) or int
+    Scales an array of values from [-1, 1] to [min_values, max_values]
+    x: np.ndarray of shape (num_envs,...) or scalar
+    min_values: np.ndarray of shape (num_envs,...) or scalar
+    max_values: np.ndarray of shape (num_envs,...) or scalar
     '''
     x_scaled = np.clip((x+1)/2 * (max_values - min_values) + min_values, min_values, max_values)
     return x_scaled
