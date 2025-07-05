@@ -33,7 +33,8 @@ dependencies = [
     'torch>=1.11.0',  # For batched sim
     'torchdiffeq',    # For batched sim
     'opt-einsum',     # For batched sim
-    'timed_count', # Only for ardupilot sitl example
+    'timed_count',    # Only for ardupilot sitl example
+    'pymavlink',      # Only for px4 vehicles
 ]
 
 [project.optional-dependencies]
