@@ -1,6 +1,6 @@
 [project]
 name = "rotorpy"
-version = "2.0.1"
+version = "2.0.2"
 description = "A multirotor simulator with aerodynamics for education and research."
 readme = "README.md"
 requires-python = ">=3.8"
