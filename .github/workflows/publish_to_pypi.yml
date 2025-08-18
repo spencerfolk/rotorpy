@@ -75,7 +75,18 @@ jobs:
         inputs: >-
           ./dist/*.tar.gz
           ./dist/*.whl
+    - name: Check if Release Exists
+      id: check_release
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: |
+        if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY"; then
+          echo "release_exists=true" >> $GITHUB_OUTPUT
+        else
+          echo "release_exists=false" >> $GITHUB_OUTPUT
+        fi
     - name: Create GitHub Release
+      if: steps.check_release.outputs.release_exists == 'false'
       env:
         GITHUB_TOKEN: ${{ github.token }}
       run: >-
@@ -83,6 +94,7 @@ jobs:
         "$GITHUB_REF_NAME"
         --repo "$GITHUB_REPOSITORY"
     - name: Upload artifact signatures to GitHub Release
+      if: steps.check_release.outputs.release_exists == 'false'
       env:
         GITHUB_TOKEN: ${{ github.token }}
       # Upload to GitHub Release using the `gh` CLI.
