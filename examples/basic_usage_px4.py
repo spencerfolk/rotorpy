@@ -20,7 +20,7 @@ def main():
         sim_rate   = 100,
     )
     results = env.run(
-        t_final      = 30,
+        t_final      = 300000,
         plot         = False,
         animate_bool = False,
         verbose      = True,
