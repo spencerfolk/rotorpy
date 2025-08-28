@@ -14,7 +14,7 @@ class Imu:
       Finishing touches added by Alexander Spinos, checked by Spencer Folk.
     """
     def __init__(self, accelerometer_params={'initial_bias': np.array([0.,0.,0.]), # m/s^2
-                                             'noise_density': (0.38**2)*np.ones(3,), # m/s^2 / sqrt(Hz)
+                                             'noise_density': (0.038**2)*np.ones(3,), # m/s^2 / sqrt(Hz)
                                              'random_walk': np.zeros(3,) # m/s^2 * sqrt(Hz)
                                              }, 
                 gyroscope_params={'initial_bias': np.array([0.,0.,0.]), # m/s^2

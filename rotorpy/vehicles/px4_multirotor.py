@@ -1,4 +1,5 @@
 from rotorpy.vehicles.multirotor import Multirotor
+from rotorpy.sensors.imu import Imu
 from pymavlink import mavutil
 import numpy as np
 import types
@@ -40,7 +41,7 @@ sihsim_quadx = {
     'c_Dy':             1.0,
     'c_Dz':             1.0,
 
-    'k_eta':            5.0,    # max thrust per rotor (N) → SIH_T_MAX
+    'k_eta':            1.0,    # max thrust per rotor (N) → SIH_T_MAX
     'k_m':              0.1,    # max yaw moment per rotor (Nm) → SIH_Q_MAX
     'k_d':              0.0,    # rotor drag
     'k_z':              0.0,    # induced inflow
@@ -92,7 +93,7 @@ class PX4Multirotor(Multirotor):
             initial_state=hover_state,
             control_abstraction="cmd_motor_speeds",
             aero=True,
-            enable_ground=False,
+            enable_ground=True,
             mavlink_url="tcpin:localhost:4560"
     ):
         super().__init__(
@@ -102,14 +103,17 @@ class PX4Multirotor(Multirotor):
             aero=aero,
             enable_ground=enable_ground,
         )
+        # Simulated IMU (with noise)
+        self.imu = Imu()
+        self._enable_imu_noise = True  # Always add a bit of noise to avoid stale detection
         self.sensor_data = types.SimpleNamespace(
-            accel           = np.zeros(3),
-            gyro            = np.zeros(3),
-            mag             = np.zeros(3),
-            abs_pressure    = 0.0,
-            diff_pressure   = 0.0,
-            pressure_alt    = 0.0,
-            temperature     = 0.0,
+            accel=np.zeros(3),
+            gyro=np.zeros(3),
+            mag=np.zeros(3),
+            abs_pressure=0.0,
+            diff_pressure=0.0,
+            pressure_alt=0.0,
+            temperature=0.0,
         )
         self.t = 0.0
         self.conn = mavutil.mavlink_connection(mavlink_url)
@@ -188,7 +192,7 @@ class PX4Multirotor(Multirotor):
         alt_mm = int(np.round(alt0_mm + up * 1000.0))
         return lat_e7, lon_e7, alt_mm
 
-    def simulate_magnetic_field(self, q, noise_std=0.05):
+    def simulate_magnetic_field(self, q, noise_std=0.1):
         """
         Generate a simulated magnetic field vector (NED, gauss) and rotate it into the body frame using the drone's orientation quaternion.
         q: quaternion [i, j, k, w] (PX4 convention)
@@ -221,9 +225,10 @@ class PX4Multirotor(Multirotor):
         self.sensor_data.mag = mag_body_gauss
         return mag_body_gauss
 
-    def simulate_pressure(self, z_up_m):
+    def simulate_pressure(self, z_up_m, noise_std_pascal=1.5):
         """
         Simulate barometric pressure (Pa) at altitude z_up_m (meters above sea level, z=0 at sea level, z up positive).
+        Adds Gaussian noise to simulate sensor noise.
         Uses a simple exponential model: P = P0 * exp(-z/H)
         P0: sea level standard pressure (101325 Pa)
         H: scale height (~8434 m for Earth's atmosphere)
@@ -231,8 +236,10 @@ class PX4Multirotor(Multirotor):
         P0 = 101325.0  # Pa
         H = 8434.0     # m
         pressure = P0 * np.exp(-z_up_m / H)
-        self.sensor_data.abs_pressure = pressure
-        return pressure
+        # Add Gaussian noise (Pa)
+        noisy_pressure = pressure + np.random.normal(0, noise_std_pascal)
+        self.sensor_data.abs_pressure = noisy_pressure
+        return noisy_pressure
 
     def step(self, state, control, t_step):
         msg = self.conn.recv_match(type='HIL_ACTUATOR_CONTROLS',
@@ -268,15 +275,22 @@ class PX4Multirotor(Multirotor):
 
         statedot = self.statedot(state, control, t_step)
 
-        a_enu = statedot["vdot"]
+        # Use simulated IMU (with noise)
+        meas_dict = self.imu.measurement(state, statedot, with_noise=self._enable_imu_noise)
+        a_enu = meas_dict["accel"]
+        omega_enu = meas_dict["gyro"]
+        omega_ned = np.array([omega_enu[1], omega_enu[0], -omega_enu[2]], dtype=float)
+
+        # Convert ENU to NED for PX4
         a_ned = np.array([a_enu[1], a_enu[0], -a_enu[2]], dtype=float)
         a_ned_milli_g = np.clip(np.round(a_ned / 9.80665 * 1000.0), INT_MIN, INT_MAX).astype(np.int16)
 
-        omega = state['w']
-        omega_ned = np.array([omega[1], omega[0], -omega[2]], dtype=float)
-
         # Simulate magnetic field in body frame based on orientation
         mag_field_vector = self.simulate_magnetic_field(state['q'])
+
+        # Update sensor_data for possible logging/debug
+        self.sensor_data.accel = a_enu
+        self.sensor_data.gyro = omega_enu
 
         self.conn.mav.hil_state_quaternion_send(
             ts,
