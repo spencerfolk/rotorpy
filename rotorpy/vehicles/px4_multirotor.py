@@ -71,6 +71,13 @@ class PX4Multirotor(Multirotor):
         self.alt0_mm = None
 
         # Prefer HOME_POSITION or GLOBAL_POSITION_INT if available quickly
+        self._init_geodetic_reference()
+
+    def _init_geodetic_reference(self):
+        """
+        Poll PX4 for initial geodetic reference (lat/lon in degE7, alt in mm).
+        Sets self.lat0_e7, self.lon0_e7, self.alt0_mm.
+        """
         self.conn.mav.request_data_stream_send(
             self.conn.target_system,
             self.conn.target_component,
@@ -78,7 +85,6 @@ class PX4Multirotor(Multirotor):
             10,  # 10 Hz request (best-effort)
             1
         )
-        # Poll a few times non-blocking to obtain an initial fix
         for _ in range(50):  # ~ a few hundred ms in total across loop iterations
             m = self.conn.recv_match(blocking=False, timeout=0.0)
             if not m:
