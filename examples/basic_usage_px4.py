@@ -1,7 +1,8 @@
 # test_px4_sitl.py
 
 from rotorpy.environments               import Environment
-from rotorpy.vehicles.px4_multirotor    import PX4Multirotor, sihsim_quadx
+from rotorpy.vehicles.px4_multirotor    import PX4Multirotor
+from rotorpy.vehicles.px4_params.sihsim_quadx import sihsim_quadx
 from rotorpy.controllers.quadrotor_control import SE3Control
 from rotorpy.trajectories.hover_traj    import HoverTraj
 
@@ -10,7 +11,7 @@ from rotorpy.trajectories.hover_traj    import HoverTraj
 #   - python examples/basic_usage_px4.py
 
 def main():
-    vehicle    = PX4Multirotor(sihsim_quadx)  
+    vehicle    = PX4Multirotor(sihsim_quadx)
     controller = SE3Control(sihsim_quadx)
     trajectory = HoverTraj()
     env = Environment(

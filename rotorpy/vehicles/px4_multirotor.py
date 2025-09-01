@@ -4,6 +4,7 @@ from pymavlink import mavutil
 import numpy as np
 import types
 from pymavlink.dialects.v20.ardupilotmega import MAVLink
+from rotorpy.vehicles.px4_params.sihsim_quadx import sihsim_quadx
 
 # Constants
 R_EARTH = 6378137.0  # meters
@@ -11,91 +12,35 @@ rad2deg = 180.0 / np.pi
 INT_MAX = 32767
 INT_MIN = -32768
 
-# 10040_sihsim_quadx
-sihsim_quadx = {
-    'mass':             1.0,     # kg      (PX4 param SIH_MASS)
-    'Ixx':              0.025,   # kg·m²   (PX4 param SIH_IXX)
-    'Iyy':              0.025,   # kg·m²   (PX4 param SIH_IYY)
-    'Izz':              0.030,   # kg·m²   (PX4 param SIH_IZZ)
-    'Ixy':              0.0,
-    'Ixz':              0.0,
-    'Iyz':              0.0,
-
-    'num_rotors':       4,       # CA_ROTOR_COUNT
-    'rotor_pos': {
-        'r1':           np.array([ 1.0,  1.0, 0.0]),  # CA_ROTOR0_PX/PY
-        'r2':           np.array([-1.0, -1.0, 0.0]),  # CA_ROTOR1_PX/PY
-        'r3':           np.array([ 1.0, -1.0, 0.0]),  # CA_ROTOR2_PX/PY
-        'r4':           np.array([-1.0,  1.0, 0.0]),  # CA_ROTOR3_PX/PY
-    },
-
-    # rotor_directions: needs the sign for each motor’s moment (from CA_ROTORn_KM)
-    # CA_ROTOR0_KM = +0.05 → +1
-    # CA_ROTOR1_KM = +0.05 → +1
-    # CA_ROTOR2_KM = -0.05 → -1
-    # CA_ROTOR3_KM = -0.05 → -1
-    'rotor_directions': np.array([ 1, 1, -1, -1 ]),
-    'rI':               np.array([0.0, 0.0, 0.0]),
-
-    'c_Dx':             1.0,
-    'c_Dy':             1.0,
-    'c_Dz':             1.0,
-
-    'k_eta':            1.0,    # max thrust per rotor (N) → SIH_T_MAX
-    'k_m':              0.1,    # max yaw moment per rotor (Nm) → SIH_Q_MAX
-    'k_d':              0.0,    # rotor drag
-    'k_z':              0.0,    # induced inflow
-    'k_h':              0.0,    # translational lift
-    'k_flap':           0.0,    # blade flapping moment
-
-    'tau_m':            0.05,   # Motor response time constant (s) ← SIH_T_TAU
-    'rotor_speed_min':  0.0,    # zero throttle
-    'rotor_speed_max':  1.0,    # full throttle
-    'motor_noise_std':  0.0,    # SIH doesn't inject noise by default
-}
-
-def compute_hover_state(mass, k_eta, num_rotors, g=9.81):
-    """
-    Solve N·k_eta·ω² = m·g for ω and return an array of length num_rotors.
-    """
+def _compute_hover_rotor_speeds(mass, k_eta, num_rotors, g=9.81):
+    """Solve N·k_eta·ω² = m·g for ω and return an array length num_rotors."""
     omega = np.sqrt((mass * g) / (num_rotors * k_eta))
     return np.full(num_rotors, omega)
-
-hover_state = {
-    'x': np.zeros(3),
-    'v': np.zeros(3),
-    'q': np.array([0, 0, 0, 1]),
-    'w': np.zeros(3),
-    'wind': np.zeros(3),
-    'rotor_speeds': compute_hover_state(
-                        sihsim_quadx['mass'],
-                        sihsim_quadx['k_eta'],
-                        sihsim_quadx['num_rotors']
-                    )
-}
-
-initial_state = {
-    'x':            np.zeros(3),   # position (m)
-    'v':            np.zeros(3),   # velocity (m/s)
-    'q':            np.zeros(4),   # quaternion [i, j, k, w] – all zeros here
-    'w':            np.zeros(3),   # body rates (rad/s)
-    'wind':         np.zeros(3),   # no wind
-    'rotor_speeds': np.zeros(
-                        sihsim_quadx['num_rotors']
-                    )               # all rotors stopped
-}
 
 class PX4Multirotor(Multirotor):
 
     def __init__(
-            self,
-            quad_params=sihsim_quadx,
-            initial_state=hover_state,
-            control_abstraction="cmd_motor_speeds",
-            aero=True,
-            enable_ground=True,
-            mavlink_url="tcpin:localhost:4560"
+        self,
+        quad_params=sihsim_quadx,
+        initial_state=None,
+        control_abstraction="cmd_motor_speeds",
+        aero=True,
+        enable_ground=True,
+        mavlink_url="tcpin:localhost:4560",
     ):
+        # If no initial state passed, initialize to hover at origin
+        if initial_state is None:
+            initial_state = {
+                'x': np.zeros(3),
+                'v': np.zeros(3),
+                'q': np.array([0, 0, 0, 1]),
+                'w': np.zeros(3),
+                'wind': np.zeros(3),
+                'rotor_speeds': _compute_hover_rotor_speeds(
+                    quad_params['mass'], quad_params['k_eta'], quad_params['num_rotors']
+                ),
+            }
+
         super().__init__(
             quad_params=quad_params,
             initial_state=initial_state,
@@ -241,77 +186,75 @@ class PX4Multirotor(Multirotor):
         self.sensor_data.abs_pressure = noisy_pressure
         return noisy_pressure
 
-    def step(self, state, control, t_step):
-        msg = self.conn.recv_match(type='HIL_ACTUATOR_CONTROLS',
-                                   blocking=False, timeout=0.0)
-        if (msg):
-            control = {
-                'cmd_motor_speeds': list(msg.controls[:self.num_rotors])
-            }
+    def _maybe_update_control_from_mavlink(self, control):
+        msg = self.conn.recv_match(type='HIL_ACTUATOR_CONTROLS', blocking=False, timeout=0.0)
+        if msg:
+            return {'cmd_motor_speeds': list(msg.controls[:self.num_rotors])}
+        return control
 
-        state = super().step(state, control, t_step)
-        self.state = state
-        self.t += t_step
-
-        ts = int(self.t * 1e6)
-        sd = self.sensor_data
-        w = tuple(state['w'])
-
-        x, y, z, wq = state['q']   # [i, j, k, w]
-        q_send = (wq, x, y, z)
-
-        # Convert local ENU (meters) -> geodetic expected by MAVLink (degE7, mm)
-        lat_e7, lon_e7, alt_mm = self._local_enu_to_geodetic(state['x'])
-
-        # Convert velocities: ENU m/s -> NED cm/s expected by MAVLink fields (vx,vy,vz)
-        # convention: vx = north, vy = east, vz = down (cm/s)
-        v_enu = state['v']
+    def _enu_to_ned_cmps(self, v_enu):
         v_n = float(v_enu[1])
         v_e = float(v_enu[0])
-        v_d = float(-v_enu[2])  # z_up -> down
-        vx_cms = int(np.round(v_n * 100.0))
-        vy_cms = int(np.round(v_e * 100.0))
-        vz_cms = int(np.round(v_d * 100.0))
+        v_d = float(-v_enu[2])
+        return (
+            int(np.round(v_n * 100.0)),
+            int(np.round(v_e * 100.0)),
+            int(np.round(v_d * 100.0)),
+        )
 
-        statedot = self.statedot(state, control, t_step)
-
-        # Use simulated IMU (with noise)
-        meas_dict = self.imu.measurement(state, statedot, with_noise=self._enable_imu_noise)
-        a_enu = meas_dict["accel"]
-        omega_enu = meas_dict["gyro"]
-        omega_ned = np.array([omega_enu[1], omega_enu[0], -omega_enu[2]], dtype=float)
-
-        # Convert ENU to NED for PX4
+    def _imu_and_mag(self, state, statedot):
+        meas = self.imu.measurement(state, statedot, with_noise=self._enable_imu_noise)
+        a_enu = meas["accel"]
+        omega_enu = meas["gyro"]
+        # ENU -> NED
         a_ned = np.array([a_enu[1], a_enu[0], -a_enu[2]], dtype=float)
-        a_ned_milli_g = np.clip(np.round(a_ned / 9.80665 * 1000.0), INT_MIN, INT_MAX).astype(np.int16)
-
-        # Simulate magnetic field in body frame based on orientation
-        mag_field_vector = self.simulate_magnetic_field(state['q'])
-
-        # Update sensor_data for possible logging/debug
+        omega_ned = np.array([omega_enu[1], omega_enu[0], -omega_enu[2]], dtype=float)
+        # Keep for logging
         self.sensor_data.accel = a_enu
         self.sensor_data.gyro = omega_enu
+        # Magnetometer in body frame (gauss)
+        mag_body = self.simulate_magnetic_field(state['q'])
+        return a_ned, omega_ned, mag_body
+
+    def _send_hil_packets(self, ts, state, control):
+        x, y, z, wq = state['q']
+        q_send = (wq, x, y, z)
+        lat_e7, lon_e7, alt_mm = self._local_enu_to_geodetic(state['x'])
+        vx_cms, vy_cms, vz_cms = self._enu_to_ned_cmps(state['v'])
+
+        statedot = self.statedot(state, control, 0.0)
+        a_ned, omega_ned, mag_body = self._imu_and_mag(state, statedot)
+
+        a_ned_mg = np.clip(np.round(a_ned / 9.80665 * 1000.0), INT_MIN, INT_MAX).astype(np.int16)
 
         self.conn.mav.hil_state_quaternion_send(
             ts,
             q_send,
-            *w,                 # roll/pitch/yaw rates (rad/s)
+            *tuple(state['w']),
             lat_e7, lon_e7, alt_mm,
             vx_cms, vy_cms, vz_cms,
-            0, 0,               # IAS/TAS as uint16 cm/s
-            int(a_ned_milli_g[0]), int(a_ned_milli_g[1]), int(a_ned_milli_g[2])
+            0, 0,
+            int(a_ned_mg[0]), int(a_ned_mg[1]), int(a_ned_mg[2])
         )
 
         self.conn.mav.hil_sensor_send(
             ts,
             *tuple(a_ned),
             *tuple(omega_ned),
-            *tuple(mag_field_vector),
+            *tuple(mag_body),
             self.simulate_pressure(state['x'][2]),
             0,
-            sd.pressure_alt,
-            25, # Temperature (°C)
-            fields_updated=0xFFFFFFFF
+            self.sensor_data.pressure_alt,
+            25,
+            fields_updated=0xFFFFFFFF,
         )
 
+    def step(self, state, control, t_step):
+        control = self._maybe_update_control_from_mavlink(control)
+        state = super().step(state, control, t_step)
+        self.state = state
+        self.t += t_step
+
+        ts = int(self.t * 1e6)
+        self._send_hil_packets(ts, state, control)
         return state
