@@ -31,10 +31,7 @@ def quat_dot(quat, omega):
                   [-q2,  q3,  q0, -q1],
                   [ q1, -q0,  q3, -q2]])
     quat_dot = 0.5 * G.T @ omega
-    # Augment to maintain unit quaternion.
-    quat_err = np.sum(quat**2) - 1
-    quat_err_grad = 2 * quat
-    quat_dot = quat_dot - quat_err * quat_err_grad
+    # Rely on post-step renormalization instead of a penalty term
     return quat_dot
 
 
@@ -218,15 +215,34 @@ class Multirotor(object):
         cmd_rotor_speeds = np.clip(cmd_rotor_speeds, self.rotor_speed_min, self.rotor_speed_max)
 
         # Form autonomous ODE for constant inputs and integrate one time step.
-        def s_dot_fn(t, s):
-            return self._s_dot_fn(t, s, cmd_rotor_speeds)
         s = Multirotor._pack_state(state)
 
-        # Option 1 - RK45 integration
-        sol = scipy.integrate.solve_ivp(s_dot_fn, (0, t_step), s, first_step=t_step)
-        s = sol['y'][:,-1]
-        # Option 2 - Euler integration
-        # s = s + s_dot_fn(0, s) * t_step  # first argument doesn't matter. It's time invariant model
+        # Use analytic motor dynamics during the integration window to avoid stiffness
+        w0 = s[16:].copy()
+        tau = self.tau_m
+
+        def s_dot_fn_analytic(t, s_vec):
+            # Analytic motor update: w(t) = w_cmd + (w0 - w_cmd) * exp(-t/tau)
+            w_t = cmd_rotor_speeds + (w0 - cmd_rotor_speeds) * np.exp(-t / tau)
+            s_eff = s_vec.copy()
+            s_eff[16:] = w_t
+            s_dot = self._s_dot_fn(t, s_eff, cmd_rotor_speeds)
+            # Zero motor derivatives since handled analytically
+            s_dot[16:] = 0.0
+            return s_dot
+
+        sol = scipy.integrate.solve_ivp(
+            s_dot_fn_analytic,
+            (0.0, t_step),
+            s,
+            method='Radau',
+            max_step=t_step,
+            rtol=1e-3,
+            atol=1e-6,
+        )
+        s = sol['y'][:, -1]
+        # Set final rotor speeds to analytic value at t_step
+        s[16:] = cmd_rotor_speeds + (w0 - cmd_rotor_speeds) * np.exp(-t_step / tau)
 
         state = Multirotor._unpack_state(s)
 
