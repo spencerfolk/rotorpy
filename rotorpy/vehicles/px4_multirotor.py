@@ -1,3 +1,4 @@
+from datetime import time
 from rotorpy.vehicles.multirotor import Multirotor
 from rotorpy.sensors.imu import Imu
 from pymavlink import mavutil
@@ -18,7 +19,13 @@ def _compute_hover_rotor_speeds(mass, k_eta, num_rotors, g=9.81):
     return np.full(num_rotors, omega)
 
 class PX4Multirotor(Multirotor):
+    """PX4 Multirotor Vehicle Model
 
+    Args:
+        quad_params (dict): Quadrotor parameters.
+        initial_state (dict, optional): Initial state of the quadrotor.
+        autopilot_controller (bool): Whether to use the autopilot controller or not.
+    """
     def __init__(
         self,
         quad_params=sihsim_quadx,
@@ -27,6 +34,8 @@ class PX4Multirotor(Multirotor):
         aero=True,
         enable_ground=True,
         mavlink_url="tcpin:localhost:4560",
+        autopilot_controller=True,
+        lockstep=True
     ):
         # If no initial state passed, initialize to hover at origin
         if initial_state is None:
@@ -40,7 +49,7 @@ class PX4Multirotor(Multirotor):
                     quad_params['mass'], quad_params['k_eta'], quad_params['num_rotors']
                 ),
             }
-
+            initial_state['rotor_speeds'] = np.zeros(quad_params['num_rotors'])
         super().__init__(
             quad_params=quad_params,
             initial_state=initial_state,
@@ -61,9 +70,13 @@ class PX4Multirotor(Multirotor):
             temperature=0.0,
         )
         self.t = 0.0
+        print("[DEBUG]: PX4Multirotor: Initializing MAVLink connection... on {}".format(mavlink_url))
         self.conn = mavutil.mavlink_connection(mavlink_url)
         self.conn.wait_heartbeat()
         print("[DEBUG]: PX4Multirotor: MAVLink connection established.")
+
+        self._autopilot_controller = autopilot_controller
+        self._lockstep = lockstep
 
         # Try to capture an initial geodetic reference from PX4 (lat/lon in degE7, alt in mm)
         self.lat0_e7 = None
@@ -192,11 +205,12 @@ class PX4Multirotor(Multirotor):
         self.sensor_data.abs_pressure = noisy_pressure
         return noisy_pressure
 
-    def _maybe_update_control_from_mavlink(self, control):
-        msg = self.conn.recv_match(type='HIL_ACTUATOR_CONTROLS', blocking=False, timeout=0.0)
-        if msg:
+    def _fetch_latest_px4_control(self):
+        """Fetch the latest HIL_ACTUATOR_CONTROLS message from PX4 and update control inputs."""
+
+        msg = self.conn.recv_match(type='HIL_ACTUATOR_CONTROLS')
+        if msg is not None:
             return {'cmd_motor_speeds': list(msg.controls[:self.num_rotors])}
-        return control
 
     def _enu_to_ned_cmps(self, v_enu):
         v_n = float(v_enu[1])
@@ -243,6 +257,12 @@ class PX4Multirotor(Multirotor):
             int(a_ned_mg[0]), int(a_ned_mg[1]), int(a_ned_mg[2])
         )
 
+        # Only flag accel/gyro as updated (exclude mag and baro-related fields)
+
+        flags_accel = 1 | 2 | 4           # XACC | YACC | ZACC
+        flags_gyro  = 8 | 16 | 32         # XGYRO | YGYRO | ZGYRO
+        updated_mask = flags_accel | flags_gyro  # = 63
+
         self.conn.mav.hil_sensor_send(
             ts,
             *tuple(a_ned),
@@ -252,15 +272,21 @@ class PX4Multirotor(Multirotor):
             0,
             self.sensor_data.pressure_alt,
             25,
-            fields_updated=0xFFFFFFFF,
+            fields_updated=updated_mask,
         )
 
     def step(self, state, control, t_step):
-        control = self._maybe_update_control_from_mavlink(control)
+        ts = int(self.t * 1e6)
+        self._send_hil_packets(ts, state, control)
+        
+        # Use PX4 commands only if autopilot_controller is True
+        if self._autopilot_controller:
+            px4_control = self._fetch_latest_px4_control(blocking=self._lockstep_enabled)
+            if px4_control is not None:
+                control = px4_control
+
         state = super().step(state, control, t_step)
         self.state = state
         self.t += t_step
 
-        ts = int(self.t * 1e6)
-        self._send_hil_packets(ts, state, control)
         return state
