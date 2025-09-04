@@ -207,7 +207,10 @@ class PX4Multirotor(Multirotor):
         statedot = self.statedot(state, control, 0.0)
         a_ned, omega_ned = self._imu(state, statedot)
 
-        a_ned_mg = np.clip(np.round(a_ned / 9.80665 * 1000.0), INT_MIN, INT_MAX).astype(np.int16)
+        # Send the ground truth acceleration in the state message (without imu noise)
+        a_flu_gt = self.imu.measurement(state, statedot, with_noise=False)["accel"]
+        a_frd_gt = np.array([a_flu_gt[0], -a_flu_gt[1], -a_flu_gt[2]], dtype=float)
+        a_frd_mg = np.clip(np.round(a_frd_gt / 9.80665 * 1000.0), INT_MIN, INT_MAX).astype(np.int16)
 
         self.conn.mav.hil_state_quaternion_send(
             ts,
@@ -216,7 +219,7 @@ class PX4Multirotor(Multirotor):
             lat_e7, lon_e7, alt_mm,
             vx_cms, vy_cms, vz_cms,
             0, 0,
-            int(a_ned_mg[0]), int(a_ned_mg[1]), int(a_ned_mg[2])
+            int(a_frd_mg[0]), int(a_frd_mg[1]), int(a_frd_mg[2])
         )
 
         # Only flag accel/gyro as updated (exclude mag and baro-related fields)
