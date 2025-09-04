@@ -34,8 +34,8 @@ sihsim_quadx = {
     'k_flap':           0.0,    # blade flapping moment
 
     'tau_m':            0.05,   # Motor response time constant (s) ← SIH_T_TAU
-    'rotor_speed_min':  0.0,    # zero throttle
-    'rotor_speed_max':  1.0,    # full throttle
+    'rotor_speed_min':  0.0,    # [rad/s] zero throttle
+    'rotor_speed_max':  838.0,  # [rad/s] full throttle
     'motor_noise_std':  0.0,
 }
 
