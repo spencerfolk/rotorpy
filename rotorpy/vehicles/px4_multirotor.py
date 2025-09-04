@@ -194,10 +194,14 @@ class PX4Multirotor(Multirotor):
         omega_frd = np.array([omega_flu[0], -omega_flu[1], -omega_flu[2]], dtype=float)
         return a_frd, omega_frd
 
-    def _send_state_and_imu_hil_packets(self, ts, state, control):
+    def _send_hil_state_quaternion(self, state, statedot):
+        """
+        Send HIL_STATE_QUATERNION message to PX4.
         
-        # TODO: refactor to split into two functions: one for HIL_STATE_QUATERNION and one for HIL_SENSOR
-        
+        Args:
+            state: Current vehicle state
+            statedot: State derivative (from the `Multirotor.statedot` method)
+        """
         # Convert cartesian ENU position to geodetic coordinates (latitude, longitude and height)
         lat_deg, lon_deg, height_meters = self.enu_to_geodetic(*state['x'])
         lat_e7, lon_e7, alt_mm = self.geodetic_to_mavlink(lat_deg, lon_deg, height_meters)
@@ -206,29 +210,37 @@ class PX4Multirotor(Multirotor):
         quaternion_flu2ned = Ardupilot._quaternion_rotorpy_to_aerospace(state['q'])
         vx_cms, vy_cms, vz_cms = self._enu_to_ned_cmps(state['v'])
 
-        statedot = self.statedot(state, control, 0.0)
-        a_ned, omega_ned = self._imu(state, statedot)
-
         # Send the ground truth acceleration in the state message (without imu noise)
         a_flu_gt = self.imu.measurement(state, statedot, with_noise=False)["accel"]
         a_frd_gt = np.array([a_flu_gt[0], -a_flu_gt[1], -a_flu_gt[2]], dtype=float)
         a_frd_mg = np.clip(np.round(a_frd_gt / 9.80665 * 1000.0), INT_MIN, INT_MAX).astype(np.int16)
 
         self.conn.mav.hil_state_quaternion_send(
-            ts,
+            int(self.t * 1e6),
             quaternion_flu2ned,
             *tuple(state['w']),
             lat_e7, lon_e7, alt_mm,
             vx_cms, vy_cms, vz_cms,
-            0, 0,
+            0, 0,  # Indicated airspeed, true airspeed
             int(a_frd_mg[0]), int(a_frd_mg[1]), int(a_frd_mg[2])
         )
+
+    def _send_hil_sensor(self, state, statedot):
+        """
+        Send HIL_SENSOR message to PX4.
+        
+        Args:
+            state: Current vehicle state
+            statedot: State derivative (computed externally)
+        """
+        # Get IMU measurements
+        a_ned, omega_ned = self._imu(state, statedot)
 
         # Only flag accel/gyro as updated (exclude mag and baro-related fields)
         updated_bitmask = SensorSource.ACCEL | SensorSource.GYRO
 
         self.conn.mav.hil_sensor_send(
-            ts,
+            int(self.t * 1e6),
             *tuple(a_ned),
             *tuple(omega_ned),
             *(0.0, 0.0, 0.0),       # Magnetometer (body frame)
@@ -239,10 +251,14 @@ class PX4Multirotor(Multirotor):
             fields_updated=updated_bitmask,
         )
 
-    def step(self, state, control, t_step):
-        ts = int(self.t * 1e6)
-        self._send_state_and_imu_hil_packets(ts, state, control)
+    def step(self, state, control, t_step):        
         
+        # Compute state derivative once for state and messages
+        # and send both HIL messages
+        statedot = self.statedot(state, control, 0.0)
+        self._send_hil_state_quaternion(state, statedot)
+        self._send_hil_sensor(state, statedot)
+
         # Use PX4 commands only if autopilot_controller is True
         if self._autopilot_controller:
             px4_control = self._fetch_latest_px4_control(blocking=self._lockstep_enabled)
