@@ -195,7 +195,9 @@ class PX4Multirotor(Multirotor):
         return a_frd, omega_frd
 
     def _send_state_and_imu_hil_packets(self, ts, state, control):
-
+        
+        # TODO: refactor to split into two functions: one for HIL_STATE_QUATERNION and one for HIL_SENSOR
+        
         # Convert cartesian ENU position to geodetic coordinates (latitude, longitude and height)
         lat_deg, lon_deg, height_meters = self.enu_to_geodetic(*state['x'])
         lat_e7, lon_e7, alt_mm = self.geodetic_to_mavlink(lat_deg, lon_deg, height_meters)
@@ -256,5 +258,4 @@ class PX4Multirotor(Multirotor):
         self.state = state
         self.t += t_step
 
-        print(f"Multirotor step: t={self.t:.1f}s, [x,y,z]={state['x']} [m]")
         return state
