@@ -248,6 +248,14 @@ class Multirotor(object):
 
         # Re-normalize unit quaternion.
         state['q'] = state['q'] / norm(state['q'])
+        
+        # Apply ground constraints
+        if self._enable_ground and self._on_ground(state):
+            # Clamp position to ground level
+            state['x'][2] = 0.0
+            # Zero out downward velocity if below ground
+            if state['v'][2] < 0.0:
+                state['v'][2] = 0.0
 
         # Add noise to the motor speed measurement
         state['rotor_speeds'] += np.random.normal(scale=np.abs(self.motor_noise), size=(self.num_rotors,))
@@ -287,11 +295,29 @@ class Multirotor(object):
         # Rotate the force from the body frame to the inertial frame
         Ftot = R@FtotB
 
+        # Ground contact handling
         if self._on_ground(state) and self._enable_ground:
-            Ftot -= self.weight
+            # Calculate the total force without ground contact
+            total_force_no_ground = self.weight + Ftot
+            
+            # If the vehicle is on the ground and the total downward force would cause
+            # further descent, apply a normal force to counteract it
+            if total_force_no_ground[2] < 0:  # Downward force (negative z)
+                # Apply normal force to prevent going through ground
+                ground_normal_force = np.array([0, 0, -total_force_no_ground[2]])
+                Ftot += ground_normal_force
 
         # Velocity derivative.
         v_dot = (self.weight + Ftot) / self.mass
+        
+        # Additional ground contact constraints
+        if self._on_ground(state) and self._enable_ground:
+            # Prevent downward velocity when on ground
+            if v_dot[2] < 0:  # Downward acceleration
+                v_dot[2] = 0.0
+            # Also damp any existing downward velocity when on ground
+            if state['v'][2] < 0:  # Currently moving downward
+                v_dot[2] = max(v_dot[2], -10.0 * state['v'][2])  # Damping term
 
         # Angular velocity derivative.
         w = state['w']
