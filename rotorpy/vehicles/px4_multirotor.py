@@ -173,7 +173,7 @@ class PX4Multirotor(Multirotor):
 
         msg = self.conn.recv_match(type='HIL_ACTUATOR_CONTROLS', blocking=blocking, timeout=0.01)
         if msg is not None:
-            return {'cmd_motor_speeds': list(msg.controls[:self.num_rotors])}
+            return {'cmd_motor_speeds': [c * self.rotor_speed_max for c in msg.controls[:self.num_rotors]]}
 
     def _enu_to_ned_cmps(self, v_enu):
         v_n = float(v_enu[1])
