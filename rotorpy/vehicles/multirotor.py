@@ -1,8 +1,11 @@
+from typing import List
 import numpy as np
 from numpy.linalg import inv, norm
 import scipy.integrate
 from scipy.spatial.transform import Rotation
 from rotorpy.vehicles.hummingbird_params import quad_params
+
+from scipy.spatial.transform import Rotation as R
 
 # imports for Batched Dynamics
 import torch
@@ -255,6 +258,7 @@ class Multirotor(object):
         
         # Apply ground constraints
         if self._enable_ground and self._on_ground(state):
+            # TODO: refactor this to use Ardupilot._handle_vehicle_on_ground
             # Clamp position to ground level
             state['x'][2] = 0.0
             # Zero out downward velocity if below ground
@@ -264,6 +268,8 @@ class Multirotor(object):
             # v_t := (1 - beta) * v_t, with beta in [0.1, 0.5]
             beta = self.ground_friction_beta
             state['v'][0:2] = (1.0 - beta) * state['v'][0:2]
+            state['w'] = np.zeros(3,)
+            state["q"] = self.flatten_attitude(state["q"])
 
         # Add noise to the motor speed measurement
         state['rotor_speeds'] += np.random.normal(scale=np.abs(self.motor_noise), size=(self.num_rotors,))
@@ -570,6 +576,27 @@ class Multirotor(object):
         """
         state = {'x':s[0:3], 'v':s[3:6], 'q':s[6:10], 'w':s[10:13], 'wind':s[13:16], 'rotor_speeds':s[16:]}
         return state
+
+    @staticmethod
+    def flatten_attitude(quaternion : List[float]) -> List[float]:
+        """
+        Set roll and pitch to 0 while keeping yaw unchanged.
+        
+        Parameters:
+            quaternion (array-like): Quaternion [x, y, z, w] representing the quadrotor's attitude.
+        
+        Returns:
+            numpy.ndarray: New quaternion with roll and pitch set to 0.
+        """
+
+        # Extract Euler angles in the 'XYZ' (roll, pitch, heading) convention wrt the world frame
+        _, _, heading = R.from_quat(quaternion).as_euler('XYZ', degrees=False)
+        
+        # Create a new rotation object with roll and pitch set to 0
+        flattened_rotation = R.from_euler('Z', heading, degrees=False)
+        
+        # Convert the new rotation back to a quaternion
+        return flattened_rotation.as_quat()
 
 
 class BatchedMultirotorParams:
