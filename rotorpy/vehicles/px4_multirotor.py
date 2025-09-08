@@ -1,14 +1,9 @@
-from datetime import time
 from rotorpy.vehicles.ardupilot_multirotor import Ardupilot
 from rotorpy.vehicles.multirotor import Multirotor
 from rotorpy.sensors.imu import Imu
 from pymavlink import mavutil
 import numpy as np
-import types
-from pymavlink.dialects.v20.ardupilotmega import MAVLink
-from rotorpy.vehicles.px4_params.sihsim_quadx import sihsim_quadx
-from dataclasses import dataclass
-from typing import List, Tuple
+from typing import Tuple
 
 import math
 
@@ -52,7 +47,7 @@ class PX4Multirotor(Multirotor):
     """
     def __init__(
         self,
-        quad_params=sihsim_quadx,
+        quad_params,
         initial_state=None,
         control_abstraction="cmd_motor_speeds",
         aero=True,
@@ -69,11 +64,8 @@ class PX4Multirotor(Multirotor):
                 'q': np.array([0, 0, 0, 1]),
                 'w': np.zeros(3),
                 'wind': np.zeros(3),
-                'rotor_speeds': _compute_hover_rotor_speeds(
-                    quad_params['mass'], quad_params['k_eta'], quad_params['num_rotors']
-                ),
+                'rotor_speeds': np.zeros(quad_params['num_rotors'])
             }
-            initial_state['rotor_speeds'] = np.zeros(quad_params['num_rotors'])
         super().__init__(
             quad_params=quad_params,
             initial_state=initial_state,
@@ -99,8 +91,8 @@ class PX4Multirotor(Multirotor):
         east_m: float,
         north_m: float,
         up_m: float,
-        lat0_deg: float = 0.0,
-        lon0_deg: float = 0.0,
+        lat0_deg: float = 40.0,
+        lon0_deg: float = -74.3,
         alt0_m: float = 0.0,
     ) -> Tuple[float, float, float]:
         """
