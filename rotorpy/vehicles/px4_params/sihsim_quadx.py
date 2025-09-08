@@ -24,9 +24,9 @@ sihsim_quadx = {
     'rotor_directions': np.array([ -1, -1, 1, 1 ]),
     'rI':               np.array([0.0, 0.0, 0.0]),
 
-    'c_Dx':             1.0,
-    'c_Dy':             1.0,
-    'c_Dz':             1.0,
+    'c_Dx':             1e-2,
+    'c_Dy':             1e-2,
+    'c_Dz':             1e-2,
 
     'k_eta':            5e-6,    # This is computed as SIH_T_MAX/(rotor_speed_max^2)
     'k_m':              1e-7,    # max yaw moment per rotor (Nm) → SIH_Q_MAX/(rotor_speed_max^2)
