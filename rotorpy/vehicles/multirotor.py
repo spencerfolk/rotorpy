@@ -256,20 +256,9 @@ class Multirotor(object):
         # Re-normalize unit quaternion.
         state['q'] = state['q'] / norm(state['q'])
         
-        # Apply ground constraints
+        # Apply ground constraints (unified across vehicles)
         if self._enable_ground and self._on_ground(state):
-            # TODO: refactor this to use Ardupilot._handle_vehicle_on_ground
-            # Clamp position to ground level
-            state['x'][2] = 0.0
-            # Zero out downward velocity if below ground
-            if state['v'][2] < 0.0:
-                state['v'][2] = 0.0
-            # Velocity clamp model (fake friction) on horizontal components
-            # v_t := (1 - beta) * v_t, with beta in [0.1, 0.5]
-            beta = self.ground_friction_beta
-            state['v'][0:2] = (1.0 - beta) * state['v'][0:2]
-            state['w'] = np.zeros(3,)
-            state["q"] = self.flatten_attitude(state["q"])
+            state = self._handle_vehicle_on_ground(state)
 
         # Add noise to the motor speed measurement
         state['rotor_speeds'] += np.random.normal(scale=np.abs(self.motor_noise), size=(self.num_rotors,))
@@ -514,6 +503,31 @@ class Multirotor(object):
         Check if the vehicle is on the ground. 
         """
         return state['x'][2] <= 0.001
+
+    def _handle_vehicle_on_ground(self, state):
+        """
+        Handle vehicle state while on ground.
+        - Clamp altitude to ground plane (z = 0)
+        - Prevent downward motion (v_z >= 0)
+        - Apply horizontal velocity damping to emulate friction
+        - Zero angular velocity and flatten attitude (keep yaw)
+        """
+        # Clamp position to ground
+        state['x'][2] = 0.0
+
+        # Prevent downward velocity
+        if state['v'][2] < 0.0:
+            state['v'][2] = 0.0
+
+        # Horizontal velocity damping (friction-like)
+        beta = self.ground_friction_beta
+        state['v'][0:2] = (1.0 - beta) * state['v'][0:2]
+
+        # Zero angular velocity and flatten attitude (keep yaw)
+        state['w'] = np.zeros(3,)
+        state['q'] = self.flatten_attitude(state['q'])
+
+        return state
 
     @classmethod
     def rotate_k(cls, q):

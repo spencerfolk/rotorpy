@@ -78,9 +78,6 @@ class Ardupilot(Multirotor):
         if self._ardupilot_control:
             control = {'cmd_motor_speeds': self._motor_cmd_to_omega(self._control_cmd.cmd_motor_speeds)}
 
-        # TODO: this should be moved inside the `Multirotor` class
-        if self._on_ground(state) and self._enable_ground:
-            state = self._handle_vehicle_on_ground(state)
 
         statedot = self.statedot(state, control, t_step)
         state =  super().step(state, control, t_step)
@@ -94,36 +91,6 @@ class Ardupilot(Multirotor):
         
         return state
 
-    def _handle_vehicle_on_ground(
-        self, state: Dict[str, np.ndarray]
-    ) -> Dict[str, np.ndarray]:
-        """
-        Handles the vehicle's state when it is on the ground.
-        This method performs the following actions:
-        - Constrains the vehicle's position to the ground level (z = 0).
-        - Stops any downward vertical motion by setting the vertical velocity to zero if it is negative.
-        - Resets the angular velocity to zero to stop any spinning motion.
-        - Sets the pitch and roll angles to zero while preserving the heading angle.
-        Args:
-            state (Dict[str, np.ndarray]): The current state of the vehicle, which includes position ('x'),
-                                           velocity ('v'), angular velocity ('w'), orientation ('q'),
-                                           wind vector ('wind') and motor angular velocities ('rotor_speeds').
-        Returns:
-            Dict[str, np.ndarray]: The updated state of the vehicle after applying the ground constraints.
-        """
-        # FIXME: when the motor command is zero and the vehicle is on the ground it drifts (threshold issue?)
-        state["x"][2] = 0
-
-        if state["v"][2] < 0:
-            state["v"] = np.zeros(3,)
-
-        state["w"] = np.zeros(
-            3,
-        )
-
-        state["q"] = Multirotor.flatten_attitude(state["q"])
-
-        return state
 
     @staticmethod
     def _motor_cmd_to_omega(pwm_commands : List[int]) -> List[float]:
