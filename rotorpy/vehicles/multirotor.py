@@ -147,6 +147,10 @@ class Multirotor(object):
                                      [0,            0,          self.c_Dz]])
         self.g = 9.81 # m/s^2
         self._enable_ground = enable_ground
+        # Ground contact horizontal friction (velocity clamp). Beta in [0.1, 0.5].
+        self.ground_friction_beta = float(quad_params.get('ground_friction_beta', 0.3))
+        # Clamp to a stable range
+        self.ground_friction_beta = max(0.1, min(0.5, self.ground_friction_beta))
 
         self.inv_inertia = inv(self.inertia)
         self.weight = np.array([0, 0, -self.mass*self.g])
@@ -256,6 +260,10 @@ class Multirotor(object):
             # Zero out downward velocity if below ground
             if state['v'][2] < 0.0:
                 state['v'][2] = 0.0
+            # Velocity clamp model (fake friction) on horizontal components
+            # v_t := (1 - beta) * v_t, with beta in [0.1, 0.5]
+            beta = self.ground_friction_beta
+            state['v'][0:2] = (1.0 - beta) * state['v'][0:2]
 
         # Add noise to the motor speed measurement
         state['rotor_speeds'] += np.random.normal(scale=np.abs(self.motor_noise), size=(self.num_rotors,))
