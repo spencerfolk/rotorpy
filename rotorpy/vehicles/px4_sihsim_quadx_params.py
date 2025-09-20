@@ -3,7 +3,7 @@ import numpy as np
 d = 0.17 # distance from CoM to rotor (m)
 
 # 10040_sihsim_quadx preset (aligned with PX4 SIH parameters)
-sihsim_quadx = {
+quad_params = {
     'mass':             1.0,     # kg      (PX4 param SIH_MASS)
     'Ixx':              0.025,   # kg·m²   (PX4 param SIH_IXX)
     'Iyy':              0.025,   # kg·m²   (PX4 param SIH_IYY)
@@ -29,13 +29,13 @@ sihsim_quadx = {
     'c_Dz':             1e-2,
 
     'k_eta':            5e-6,    # This is computed as SIH_T_MAX/(rotor_speed_max^2)
-    'k_m':              1e-7,    # max yaw moment per rotor (Nm) → SIH_Q_MAX/(rotor_speed_max^2)
+    'k_m':              1e-7,    # max yaw moment per rotor (Nm) to SIH_Q_MAX/(rotor_speed_max^2)
     'k_d':              0.0,    # rotor drag
     'k_z':              0.0,    # induced inflow
     'k_h':              0.0,    # translational lift
     'k_flap':           0.0,    # blade flapping moment
 
-    'tau_m':            0.05,   # Motor response time constant (s) ← SIH_T_TAU
+    'tau_m':            0.05,   # Motor response time constant (s) from SIH_T_TAU
     'rotor_speed_min':  0.0,    # [rad/s] zero throttle
     'rotor_speed_max':  1000.0,  # [rad/s] full throttle
     'motor_noise_std':  0.0,

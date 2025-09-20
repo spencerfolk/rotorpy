@@ -3,7 +3,7 @@
 from rotorpy.environments               import Environment
 from rotorpy.trajectories.circular_traj import ThreeDCircularTraj
 from rotorpy.vehicles.px4_multirotor    import PX4Multirotor
-from rotorpy.vehicles.px4_params.sihsim_quadx import sihsim_quadx
+from rotorpy.vehicles.px4_sihsim_quadx_params import quad_params as sihsim_quadx
 from rotorpy.controllers.quadrotor_control import SE3Control
 from rotorpy.trajectories.hover_traj    import HoverTraj
 
