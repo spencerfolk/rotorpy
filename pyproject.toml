@@ -1,16 +1,16 @@
 [project]
 name = "rotorpy"
-version = "2.0.0"
+version = "2.1.0"
 description = "A multirotor simulator with aerodynamics for education and research."
 readme = "README.md"
 requires-python = ">=3.8"
 license = { file = "LICENSE.md" }
 keywords = ["drone", "uav", "quadrotor", "multirotor", "aerodynamics", "simulation", "controls", "robotics", "estimation"]  # Optional
 authors = [
-    { name = "Spencer Folk", email = "sfolk@seas.upenn.edu" } 
+    { name = "Spencer Folk", email = "spencer.folk@gmail.com" } 
 ]
 maintainers = [
-    { name = "Spencer Folk", email = "sfolk@seas.upenn.edu" }
+    { name = "Spencer Folk", email = "spencer.folk@gmail.com" }
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -34,7 +34,6 @@ dependencies = [
     'torchdiffeq',    # For batched sim
     'opt-einsum',     # For batched sim
     'timed_count',    # Only for ardupilot sitl example
-    'pymavlink',      # Only for px4 vehicles
 ]
 
 [project.optional-dependencies]
@@ -53,6 +52,16 @@ testing = [
 ]
 filter = [
     'filterpy == 1.4.5',
+]
+px4 = [
+    'pymavlink',
+]
+all = [
+    "stable_baselines3",
+    "tensorboard",
+    "pytest",
+    "filterpy == 1.4.5",
+    "pymavlink",
 ]
 
 [project.urls]
