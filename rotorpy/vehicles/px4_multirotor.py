@@ -54,8 +54,10 @@ class PX4Multirotor(Multirotor):
         enable_ground=True,
         mavlink_url="tcpin:localhost:4560",
         autopilot_controller=True,
-        lockstep=True
+        lockstep=True,
+        integrator_kwargs=None
     ):
+        integrator_kwargs = integrator_kwargs if integrator_kwargs is not None else {'method':'Radau', 'rtol':1e-3, 'atol':1e-6, 'max_step':0.01}
         # If no initial state passed, initialize to hover at origin
         if initial_state is None:
             initial_state = {
@@ -72,6 +74,7 @@ class PX4Multirotor(Multirotor):
             control_abstraction=control_abstraction,
             aero=aero,
             enable_ground=enable_ground,
+            integrator_kwargs=integrator_kwargs
         )
         # Simulated IMU (with noise)
         self.imu = Imu()
