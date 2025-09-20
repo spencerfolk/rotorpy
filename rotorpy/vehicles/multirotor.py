@@ -81,6 +81,8 @@ class Multirotor(object):
                                 'cmd_vel': the controller commands a velocity vector in the world frame. 
                                 'cmd_acc': the controller commands a mass normalized thrust vector (acceleration) in the world frame.
         aero: boolean, determines whether or not aerodynamic drag forces are computed. 
+        enable_ground: boolean, determines whether or not ground contact is enabled.
+        integrator_kwargs: dictionary of keyword arguments passed to scipy.integrate.solve_ivp
     """
     def __init__(self, quad_params, initial_state = {'x': np.array([0,0,0]),
                                             'v': np.zeros(3,),
@@ -90,7 +92,8 @@ class Multirotor(object):
                                             'rotor_speeds': np.array([1788.53, 1788.53, 1788.53, 1788.53])},
                        control_abstraction='cmd_motor_speeds',
                        aero = True,
-                       enable_ground = False  
+                       enable_ground = False,
+                       integrator_kwargs = None,
                 ):
         """
         Initialize quadrotor physical parameters.
@@ -173,6 +176,12 @@ class Multirotor(object):
 
         self.aero = aero
 
+        # Integrator settings. 
+        if integrator_kwargs is None:
+            self.integrator_kwargs = {'method':'RK45'}
+        else:
+            self.integrator_kwargs = integrator_kwargs
+
     def extract_geometry(self):
         """
         Extracts the geometry in self.rotors for efficient use later on in the computation of 
@@ -222,35 +231,20 @@ class Multirotor(object):
         cmd_rotor_speeds = np.clip(cmd_rotor_speeds, self.rotor_speed_min, self.rotor_speed_max)
 
         # Form autonomous ODE for constant inputs and integrate one time step.
+        def s_dot_fn(t, s):
+            return self._s_dot_fn(t, s, cmd_rotor_speeds)
         s = Multirotor._pack_state(state)
 
-        # Use analytic motor dynamics during the integration window to avoid stiffness
-        w0 = s[16:].copy()
-        tau = self.tau_m
-
-        def s_dot_fn_analytic(t, s_vec):
-            # Analytic motor update: w(t) = w_cmd + (w0 - w_cmd) * exp(-t/tau)
-            w_t = cmd_rotor_speeds + (w0 - cmd_rotor_speeds) * np.exp(-t / tau)
-            s_eff = s_vec.copy()
-            s_eff[16:] = w_t
-            s_dot = self._s_dot_fn(t, s_eff, cmd_rotor_speeds)
-            # Zero motor derivatives since handled analytically
-            s_dot[16:] = 0.0
-            return s_dot
-
+        # Integrate
         sol = scipy.integrate.solve_ivp(
-            s_dot_fn_analytic,
+            s_dot_fn,
             (0.0, t_step),
             s,
-            method='Radau',
-            max_step=t_step,
-            rtol=1e-3,
-            atol=1e-6,
+            **self.integrator_kwargs
         )
         s = sol['y'][:, -1]
-        # Set final rotor speeds to analytic value at t_step
-        s[16:] = cmd_rotor_speeds + (w0 - cmd_rotor_speeds) * np.exp(-t_step / tau)
 
+        # Unpack the state vector.
         state = Multirotor._unpack_state(s)
 
         # Re-normalize unit quaternion.
@@ -298,30 +292,9 @@ class Multirotor(object):
         # Rotate the force from the body frame to the inertial frame
         Ftot = R@FtotB
 
-        # Ground contact handling
-        if self._on_ground(state) and self._enable_ground:
-            # Calculate the total force without ground contact
-            total_force_no_ground = self.weight + Ftot
-            
-            # If the vehicle is on the ground and the total downward force would cause
-            # further descent, apply a normal force to counteract it
-            if total_force_no_ground[2] < 0:  # Downward force (negative z)
-                # Apply normal force to prevent going through ground
-                ground_normal_force = np.array([0, 0, -total_force_no_ground[2]])
-                Ftot += ground_normal_force
-
         # Velocity derivative.
         v_dot = (self.weight + Ftot) / self.mass
         
-        # Additional ground contact constraints
-        if self._on_ground(state) and self._enable_ground:
-            # Prevent downward velocity when on ground
-            if v_dot[2] < 0:  # Downward acceleration
-                v_dot[2] = 0.0
-            # Also damp any existing downward velocity when on ground
-            if state['v'][2] < 0:  # Currently moving downward
-                v_dot[2] = max(v_dot[2], -10.0 * state['v'][2])  # Damping term
-
         # Angular velocity derivative.
         w = state['w']
         w_hat = Multirotor.hat_map(w)
