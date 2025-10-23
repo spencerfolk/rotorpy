@@ -66,12 +66,12 @@ from rotorpy.environments import Environment
 from rotorpy.vehicles.multirotor import Multirotor
 from rotorpy.vehicles.crazyflie_params import quad_params
 from rotorpy.controllers.quadrotor_control import SE3Control
-from rotorpy.trajectories.circular_traj import CircularTraj
+from rotorpy.trajectories.lissajous_traj import TwoDLissajous
 from rotorpy.wind.default_winds import SinusoidWind
 
 sim_instance = Environment(vehicle=Multirotor(quad_params),           # vehicle object, must be specified. 
                            controller=SE3Control(quad_params),        # controller object, must be specified.
-                           trajectory=CircularTraj(radius=2),         # trajectory object, must be specified.
+                           trajectory=TwoDLissajous(),                # trajectory object, must be specified.
                            wind_profile=SinusoidWind(),               # OPTIONAL: wind profile object, if none is supplied it will choose no wind. 
                            sim_rate     = 100,                        # OPTIONAL: The update frequency of the simulator in Hz. Default is 100 Hz.
                            imu          = None,                       # OPTIONAL: imu sensor object, if none is supplied it will choose a default IMU sensor.
