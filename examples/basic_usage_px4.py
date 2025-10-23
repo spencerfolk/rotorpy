@@ -26,7 +26,7 @@ def main():
         sim_rate   = 100,
     )
     results = env.run(
-        t_final      = 30000,
+        t_final      = 60,
         use_mocap=False,
         plot_mocap=False,
         plot_estimator=False,
