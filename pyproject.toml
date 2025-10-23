@@ -49,6 +49,7 @@ testing = [
     'pytest',
     'filterpy == 1.4.5',
     'stable_baselines3',
+    'pymavlink'
 ]
 filter = [
     'filterpy == 1.4.5',
