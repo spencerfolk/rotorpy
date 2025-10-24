@@ -1,8 +1,3 @@
-"""
-TODO: Set up figure for appropriate target video size (eg. 720p).
-TODO: Decide which additional user options should be available.
-"""
-
 from datetime import datetime
 from pathlib import Path
 
@@ -19,12 +14,7 @@ class ClosingFuncAnimation(FuncAnimation):
     def __init__(self, fig, func, *args, **kwargs):
         self._close_on_finish = kwargs.pop('close_on_finish')
         FuncAnimation.__init__(self, fig, func, *args, **kwargs)
-
-    # def _stop(self, *args):
-    #     super()._stop(self, *args)
-    #     if self._close_on_finish:
-    #         plt.close(self._fig)
-
+        
     def _step(self, *args):
         still_going = FuncAnimation._step(self, *args)
         if self._close_on_finish and not still_going:
@@ -152,89 +142,3 @@ def animate(time, position, rotation, wind, animate_wind, world, filename=None, 
             ani = None
 
     return ani
-
-if __name__ == "__main__":
-
-    from rotorpy.vehicles.crazyflie_params import quad_params  # Import quad params for the quadrotor environment.
-    from rotorpy.learning.quadrotor_environments import QuadrotorEnv
-    from rotorpy.controllers.quadrotor_control import SE3Control
-    from rotorpy.trajectories.circular_traj import CircularTraj
-
-    import gymnasium as gym
-
-    output_video_dir = os.path.join(os.path.dirname(__file__), "..", "data_out", "test_animation.mp4")
-
-    # Create M SE3 drones.
-    M = 3
-    baseline_controller = SE3Control(quad_params) 
-
-    def make_env():
-        return gym.make("Quadrotor-v0", 
-                    control_mode ='cmd_motor_speeds', 
-                    quad_params = quad_params,
-                    max_time = 5,
-                    world = None,
-                    sim_rate = 100,
-                    render_mode='3D',
-                    render_fps = 60,
-                    color='b')
-
-    envs = [make_env() for _ in range(M)]
-
-    # For each environment command it to do a circle with random radius and location. 
-    trajs = []
-    for env in envs:
-        center = np.random.uniform(low=-2, high=2, size=3)
-        radius = np.random.uniform(low=0.5, high=1.5)
-        freq = np.random.uniform(low=0.1, high=0.3)
-        plane = np.random.choice(['XY', 'YZ', 'XZ'])
-        traj = CircularTraj(center=center, radius=radius, freq=freq, plane=plane, direction=np.random.choice(['CW', 'CCW']))
-        trajs.append(traj)
-
-    # Collect observations for each environment.
-    observations = [env.reset(initial_state='random')[0] for env in envs]
-
-    # This is a list of env termination conditions so that the loop only ends when the final env is terminated. 
-    terminated = [False]*len(observations)
-
-    # Arrays for animating. 
-    T = [0]
-    position = [[obs[0:3] for obs in observations]]
-    quat = [[obs[6:10] for obs in observations]]
-
-    while not all(terminated):
-        for (i, env) in enumerate(envs):  # For each environment...
-            # Unpack the observation from the environment
-            state = {'x': observations[i][0:3], 'v': observations[i][3:6], 'q': observations[i][6:10], 'w': observations[i][10:13]}
-
-            # Command the quad to do circles.
-            flat = trajs[i].update(env.unwrapped.t)
-            control_dict = baseline_controller.update(0, state, flat)
-
-            # Extract the commanded motor speeds.
-            cmd_motor_speeds = control_dict['cmd_motor_speeds']
-
-            # The environment expects the control inputs to all be within the range [-1,1]
-            action = np.interp(cmd_motor_speeds, [env.unwrapped.rotor_speed_min, env.unwrapped.rotor_speed_max], [-1,1])
-
-            # For the last environment, append the current timestep.
-            if i == 0: 
-                T.append(env.unwrapped.t)
-
-            # Step the environment forward. 
-            observations[i], reward, terminated[i], truncated, info = env.step(action)
-
-        # Append arrays for plotting.
-        position.append([obs[0:3] for obs in observations])
-        quat.append([obs[6:10] for obs in observations])
-
-    # Convert to numpy arrays.
-    T = np.array(T)
-    position = np.array(position)
-    quat = np.array(quat)
-
-    # Convert the quaternion to rotation matrix.
-    rotation = np.array([Rotation.from_quat(quat[i]).as_matrix() for i in range(T.size)])
-
-    # Animate the results.
-    ani = animate(T, position, rotation, wind=np.zeros((T.size,M,3)), animate_wind=False, world=envs[0].world, filename=output_video_dir, blit=False, show_axes=True, close_on_finish=True)

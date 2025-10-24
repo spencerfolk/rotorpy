@@ -38,9 +38,9 @@ quad_params = {
     'rI': np.array([0,0,0]), # location of the IMU sensor, meters
 
     # Frame aerodynamic properties
-    'c_Dx': 0.5e-2,  # parasitic drag in body x axis, N/(m/s)**2
-    'c_Dy': 0.5e-2,  # parasitic drag in body y axis, N/(m/s)**2
-    'c_Dz': 1e-2,  # parasitic drag in body z axis, N/(m/s)**2
+    'c_Dx': 0.0,  # parasitic drag in body x axis, N/(m/s)**2
+    'c_Dy': 0.0,  # parasitic drag in body y axis, N/(m/s)**2
+    'c_Dz': 0.0,  # parasitic drag in body z axis, N/(m/s)**2
 
     # Rotor properties
     # See "System Identification of the Crazyflie 2.0 Nano Quadrocopter", Forster 2015.
@@ -48,12 +48,19 @@ quad_params = {
     'k_m':   7.8e-10,           # yaw moment coefficient Nm/(rad/s)**2
     'k_d':   10.2506e-07,       # rotor drag coefficient N/(rad*m/s**2) = kg/rad
     'k_z':   7.553e-07,         # induced inflow coefficient N/(rad*m/s**2) = kg/rad
+    'k_h':   0.0,               # translational lift coefficient (N/(m/s)**2) = kg/m
     'k_flap': 0.0,              # Flapping moment coefficient Nm/(rad*m/s**2) = kg*m/rad
 
     # Motor properties
     'tau_m': 0.005,           # motor response time, seconds
     'rotor_speed_min': 0,       # rad/s
     'rotor_speed_max': 2500,    # rad/s
-    'motor_noise_std': 100,     # rad/s
+    'motor_noise_std': 0.0,     # rad/s
+
+    # Lower level controller properties (for higher level control abstractions)
+    'k_w': 1,               # The body rate P gain (for cmd_ctbr)
+    'k_v': 10,              # The *world* velocity P gain (for cmd_vel)
+    'kp_att': 1030,      # The attitude P gain (for cmd_vel, cmd_acc, and cmd_ctatt)
+    'kd_att': 51,       # The attitude D gain (for cmd_vel, cmd_acc, and cmd_ctatt)
 
 }

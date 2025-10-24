@@ -2,17 +2,20 @@ import gymnasium as gym
 import numpy as np
 import matplotlib.pyplot as plt
 import os
+import torch
+from scipy.spatial.transform import Rotation as R
 
 from rotorpy.vehicles.crazyflie_params import quad_params  # Import quad params for the quadrotor environment.
 
 # Import the QuadrotorEnv gymnasium environment using the following command.
-from rotorpy.learning.quadrotor_environments import QuadrotorEnv
+from rotorpy.learning.quadrotor_environments import QuadrotorEnv, make_default_vec_env
 
 # Reward functions can be specified by the user, or we can import from existing reward functions.
-from rotorpy.learning.quadrotor_reward_functions import hover_reward
+from rotorpy.learning.quadrotor_reward_functions import vec_hover_reward
 
 # For the baseline, we'll use the stock SE3 controller.
 from rotorpy.controllers.quadrotor_control import SE3Control
+
 baseline_controller = SE3Control(quad_params)
 
 """
@@ -54,43 +57,23 @@ from stable_baselines3 import PPO                                   # We'll use 
 from stable_baselines3.ppo.policies import MlpPolicy                # The policy will be represented by an MLP
 
 # Choose the weights for our reward function. Here we are creating a lambda function over hover_reward.
-reward_function = lambda obs, act: hover_reward(obs, act, weights={'x': 1, 'v': 0.1, 'w': 0, 'u': 1e-5})
+# reward_function = lambda obs, act: hover_reward(obs, act, weights={'x': 1, 'v': 0.1, 'w': 0, 'u': 1e-5})
+# reward_function = lambda obs, act: vec_hover_reward_positive(obs, act, weights={'x': 1, 'v': 0.1, 'w': 0, 'u': 1e-5})
+
+control_mode = "cmd_ctatt"
 
 # Set up the figure for plotting all the agents.
 fig = plt.figure()
 ax = fig.add_subplot(projection='3d')
 
 # Make the environments for the RL agents.
-num_quads = 10
-def make_env():
-    return gym.make("Quadrotor-v0", 
-                control_mode ='cmd_motor_speeds', 
-                reward_fn = reward_function,
-                quad_params = quad_params,
-                max_time = 5,
-                world = None,
-                sim_rate = 100,
-                render_mode='3D',
-                render_fps = 60,
-                fig=fig,
-                ax=ax,
-                color='b')
+# +1 for the baseline SE3 controller.
+num_quads = 10 + 1
+device = torch.device("cpu")
 
-envs = [make_env() for _ in range(num_quads)]
-
-# Lastly, add in the baseline (SE3 controller) environment.
-envs.append(gym.make("Quadrotor-v0", 
-                control_mode ='cmd_motor_speeds', 
-                reward_fn = reward_function,
-                quad_params = quad_params,
-                max_time = 5,
-                world = None,
-                sim_rate = 100,
-                render_mode='3D',
-                render_fps = 60,
-                fig=fig,
-                ax=ax,
-                color='k'))  # Geometric controller
+env = make_default_vec_env(num_quads, quad_params, control_mode, device, render_mode="3D", reward_fn=vec_hover_reward, fig=fig, ax=ax)
+env.reset_options["initial_states"] = "random"
+env.reset_options["params"] = "fixed"
 
 # Print out policies for the user to select.
 def extract_number(filename):
@@ -114,7 +97,7 @@ for (k, num_timesteps_idx) in enumerate(num_timesteps_idxs):  # For each num_tim
     # Load the model for the appropriate epoch.
     model_path = os.path.join(num_timesteps_dir, num_timesteps_list_sorted[num_timesteps_idx])
     print(f"Loading model from the path {model_path}")
-    model = PPO.load(model_path, env=envs[0], tensorboard_log=log_dir)
+    model = PPO.load(model_path, env=env, tensorboard_log=log_dir)
 
     # Set figure title for 3D plot.
     fig.suptitle(f"Model: PPO/{models_available[model_idx]}, Num Timesteps: {extract_number(num_timesteps_list_sorted[num_timesteps_idx]):,}")
@@ -126,87 +109,81 @@ for (k, num_timesteps_idx) in enumerate(num_timesteps_idxs):  # For each num_tim
         os.makedirs(frame_path)
 
     # Collect observations for each environment.
-    observations = [env.reset()[0] for env in envs]
+    observation = env.reset()
 
     # This is a list of env termination conditions so that the loop only ends when the final env is terminated. 
-    terminated = [False]*len(observations)
+    terminated = np.array([False for _ in range(num_quads)])
 
     # Arrays for plotting position vs time. 
     T = [0]
-    x = [[obs[0] for obs in observations]]
-    y = [[obs[1] for obs in observations]]
-    z = [[obs[2] for obs in observations]]
+    pos = observation[:,0:3].reshape(1, num_quads, 3)
 
     j = 0  # Index for frames. Only updated when the last environment runs its update for the time step. 
-    while not all(terminated):
+    while not np.all(terminated):
         frames = []  # Reset frames. 
-        for (i, env) in enumerate(envs):  # For each environment...
-            env.render() 
+        env.render()
 
-            if i == len(envs)-1:  # If it's the last environment, run the SE3 controller for the baseline. 
+        # Get the policy's actions
+        action, _ = model.predict(observation, deterministic=True)
 
-                # Unpack the observation from the environment
-                state = {'x': observations[i][0:3], 'v': observations[i][3:6], 'q': observations[i][6:10], 'w': observations[i][10:13]}
+        # Run the SE3 controller for the last drone in the environment.
+        state = {'x': observation[-1, 0:3], 
+                 'v': observation[-1, 3:6], 
+                 'q': observation[-1, 6:10], 
+                 'w': observation[-1, 10:13]}
+        flat = {'x': [0, 0, 0], 
+                'x_dot': [0, 0, 0], 
+                'x_ddot': [0, 0, 0], 
+                'x_dddot': [0, 0, 0],
+                'yaw': 0, 
+                'yaw_dot': 0, 
+                'yaw_ddot': 0}
 
-                # Command the quad to hover.
-                flat = {'x': [0, 0, 0], 
-                        'x_dot': [0, 0, 0], 
-                        'x_ddot': [0, 0, 0], 
-                        'x_dddot': [0, 0, 0],
-                        'yaw': 0, 
-                        'yaw_dot': 0, 
-                        'yaw_ddot': 0}
-                control_dict = baseline_controller.update(0, state, flat)
+        control_dict = baseline_controller.update(0, state, flat)
 
-                # Extract the commanded motor speeds.
-                cmd_motor_speeds = control_dict['cmd_motor_speeds']
+        # Rescale the controller actions to [-1, 1], and convert quaternions to euler angles, expected by environment
+        ctrl_norm_thrust = (control_dict["cmd_thrust"] - 4 * env.min_thrust[-1]) / (4 * env.max_thrust[-1] - 4 * env.min_thrust[-1])
+        ctrl_norm_thrust = ctrl_norm_thrust * 2 - 1
+        eulers = R.from_quat(control_dict["cmd_q"]).as_euler('xyz')
+        eulers_norm = 2 * (eulers + np.pi) / (2 * np.pi) - 1
+        ctrlr_action = np.hstack([ctrl_norm_thrust, eulers_norm])
 
-                # The environment expects the control inputs to all be within the range [-1,1]
-                action = np.interp(cmd_motor_speeds, [env.unwrapped.rotor_speed_min, env.unwrapped.rotor_speed_max], [-1,1])
+        # Replace the last action with the SE3 controller action.
+        action[-1] = ctrlr_action
 
-                # For the last environment, append the current timestep. 
-                T.append(env.unwrapped.t)
+        observation, reward, done, info = env.step(action)
+        terminated = np.logical_or(done, terminated)
 
-            else: # For all other environments, get the action from the RL control policy. 
-                action, _ = model.predict(observations[i], deterministic=True)
+        pos = np.append(pos, observation[:,0:3].reshape(1, num_quads, 3), axis=0)
+        pos[-1, terminated, :] = 0
 
-            # Step the environment forward. 
-            observations[i], reward, terminated[i], truncated, info = env.step(action)
+        # Keep in mind that the environment will automatically reset any quadrotors that are terminated or truncated, as per the Stable Baselines expectation.
+        T.append(env.t[0])
 
-            if i == len(envs)-1:  # Save the current fig after the last agent. 
-                if env.unwrapped.rendering:
-                    frame = os.path.join(frame_path, 'frame_'+str(j)+'.png')
-                    fig.savefig(frame)
-                    j += 1
+        if env.render_mode == "3D":
+            frame = os.path.join(frame_path, 'frame_'+str(j)+'.png')
+            fig.savefig(frame)
+            j += 1
 
-        # Append arrays for plotting.
-        x.append([obs[0] for obs in observations])
-        y.append([obs[1] for obs in observations])
-        z.append([obs[2] for obs in observations])
-
-    # Convert to numpy arrays. 
-    x = np.array(x)
-    y = np.array(y)
-    z = np.array(z)
-    T = np.array(T)
+    T = np.array(T)[:-1]
 
     # Plot position vs time. 
     fig_pos, ax_pos = plt.subplots(nrows=3, ncols=1, num="Position vs Time")
     fig_pos.suptitle(f"Model: PPO/{models_available[model_idx]}, Num Timesteps: {extract_number(num_timesteps_list_sorted[num_timesteps_idx]):,}")
-    ax_pos[0].plot(T, x[:, 0], 'b-', linewidth=1, label="RL")
-    ax_pos[0].plot(T, x[:, 1:-1], 'b-', linewidth=1)
-    ax_pos[0].plot(T, x[:, -1], 'k-', linewidth=2, label="GC")
+    ax_pos[0].plot(T, pos[:-1, 0, 0], 'b-', linewidth=1, label="RL")
+    ax_pos[0].plot(T, pos[:-1, 1:-1, 0], 'b-', linewidth=1)
+    ax_pos[0].plot(T, pos[:-1, -1, 0], 'k-', linewidth=2, label="GC")
     ax_pos[0].legend()
     ax_pos[0].set_ylabel("X, m")
     ax_pos[0].set_ylim([-2.5, 2.5])
-    ax_pos[1].plot(T, y[:, 0], 'b-', linewidth=1, label="RL")
-    ax_pos[1].plot(T, y[:, 1:-1], 'b-', linewidth=1)
-    ax_pos[1].plot(T, y[:, -1], 'k-', linewidth=2, label="GC")
+    ax_pos[1].plot(T, pos[:-1, 0, 1], 'b-', linewidth=1, label="RL")
+    ax_pos[1].plot(T, pos[:-1, 1:-1, 1], 'b-', linewidth=1)
+    ax_pos[1].plot(T, pos[:-1, -1, 1], 'k-', linewidth=2, label="GC")
     ax_pos[1].set_ylabel("Y, m")
     ax_pos[1].set_ylim([-2.5, 2.5])
-    ax_pos[2].plot(T, z[:, 0], 'b-', linewidth=1, label="RL")
-    ax_pos[2].plot(T, z[:, 1:-1], 'b-', linewidth=1)
-    ax_pos[2].plot(T, z[:, -1], 'k-', linewidth=2, label="GC")
+    ax_pos[2].plot(T, pos[:-1, 0, 2], 'b-', linewidth=1, label="RL")
+    ax_pos[2].plot(T, pos[:-1, 1:-1, 2], 'b-', linewidth=1)
+    ax_pos[2].plot(T, pos[:-1, -1, 2], 'k-', linewidth=2, label="GC")
     ax_pos[2].set_ylabel("Z, m")
     ax_pos[2].set_ylim([-2.5, 2.5])
     ax_pos[2].set_xlabel("Time, s")

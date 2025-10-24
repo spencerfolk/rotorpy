@@ -1,0 +1,80 @@
+[project]
+name = "rotorpy"
+version = "2.1.0"
+description = "A multirotor simulator with aerodynamics for education and research."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { file = "LICENSE.md" }
+keywords = ["drone", "uav", "quadrotor", "multirotor", "aerodynamics", "simulation", "controls", "robotics", "estimation"]  # Optional
+authors = [
+    { name = "Spencer Folk", email = "spencer.folk@gmail.com" } 
+]
+maintainers = [
+    { name = "Spencer Folk", email = "spencer.folk@gmail.com" }
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+]
+dependencies = [
+    'pyyaml',
+    'cvxopt',
+    'matplotlib',
+    'numpy>=1.24',
+    'scipy',
+    'pandas',
+    'tqdm',
+    'gymnasium',
+    'roma',           # For batched sim
+    'torch>=1.11.0',  # For batched sim
+    'torchdiffeq',    # For batched sim
+    'opt-einsum',     # For batched sim
+    'timed_count',    # Only for ardupilot sitl example
+]
+
+[project.optional-dependencies]
+learning = [
+    'stable_baselines3',
+    'tensorboard',
+]
+dev = [
+    'pytest',
+    'filterpy == 1.4.5',
+]
+testing = [
+    'pytest',
+    'filterpy == 1.4.5',
+    'stable_baselines3',
+    'pymavlink'
+]
+filter = [
+    'filterpy == 1.4.5',
+]
+px4 = [
+    'pymavlink',
+]
+all = [
+    "stable_baselines3",
+    "tensorboard",
+    "pytest",
+    "filterpy == 1.4.5",
+    "pymavlink",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/spencerfolk/rotorpy"
+"Bug Reports" = "https://github.com/spencerfolk/rotorpy/issues"
+"Source" = "https://github.com/spencerfolk/rotorpy"
+
+
+[build-system]
+requires = ["setuptools>=44.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["rotorpy", "rotorpy.*"]
+[tool.setuptools]

@@ -229,31 +229,3 @@ class OccupancyMap:
         """
         ind = self.metric_to_index(voxel_metric)
         return (not self.is_valid_index(ind)) or self.is_occupied_index(ind)
-
-
-if __name__ == "__main__":
-
-    import matplotlib.pyplot as plt
-
-    import os
-
-    # Create a world object first
-    world = World.random_forest(world_dims=(5, 5, 5), tree_width=.1, tree_height=5, num_trees=10)
-    world_fname = 'pillar'
-    world = World.from_file(os.path.abspath(os.path.join(os.path.dirname(__file__),'..','worlds',world_fname+'.json')))
-
-    # Create a figure
-    fig = plt.figure()
-    ax = fig.add_subplot(projection='3d')
-    # Draw the world
-    world.draw(ax)
-
-    # Create an Occupancy map
-    oc = OccupancyMap(world, (.1, .1, .1), .01)
-    position = np.array([2.5, 2.5, 0])
-    region = (1, 1)
-    oc.get_local_2d_occupancy_map(position, region_size=region)
-    # Draw the occupancy map (may be slow for many voxels; will look weird if plotted on top of a world.draw)
-    oc.draw(ax)
-
-    plt.show()

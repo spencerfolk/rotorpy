@@ -23,7 +23,7 @@ from rotorpy.vehicles.multirotor import Multirotor
 from rotorpy.vehicles.hummingbird_params import quad_params
 from rotorpy.controllers.quadrotor_control import SE3Control
 from rotorpy.trajectories.hover_traj import HoverTraj
-from rotorpy.trajectories.polynomial_traj import Polynomial
+from rotorpy.trajectories.minsnap import MinSnap
 from rotorpy.wind.dryden_winds import DrydenGust
 
 from rotorpy.utils.postprocessing import unpack_sim_data
@@ -97,7 +97,7 @@ points = np.array([[0,0,0],
                    [0,0,0],
                    [0,0,dist],
                    [0,0,0]])
-calibration_traj = Polynomial(points, v_avg=1)
+calibration_traj = MinSnap(points, v_avg=1)
 
 """
 Run the Monte Carlo simulations

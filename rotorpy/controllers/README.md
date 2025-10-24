@@ -13,3 +13,5 @@ Currently, the `Multirotor` object accepts the following controller inputs (abst
 For higher control abstractions, e.g. `cmd_vel` or `cmd_ctatt`, the lower level controllers are hidden in `Multirotor`. The gains for these controllers were hand-tuned for the Crazyflie parameters, so they may need tuning if a different vehicle is being used. 
 
 Other controllers can be developed but must complement the vehicle and the trajectory they are trying to stabilize to. 
+
+**NEW in `v2.0.0`:** RotorPy now has a batched simulation environment. Controllers can (and should) be parallelized over multiple UAVs using PyTorch operations which can utilize GPU resources. For an example of the expected output of this new batched controller, see `BatchedSE3Control` in `quadrotor_control.py`. 
