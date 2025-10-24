@@ -8,11 +8,10 @@ from rotorpy.environments import Environment
 # There must also be a corresponding parameter file. 
 from rotorpy.vehicles.multirotor import Multirotor
 from rotorpy.vehicles.crazyflie_params import quad_params
-# from rotorpy.vehicles.hummingbird_params import quad_params  # There's also the Hummingbird
 
 # You will also need a controller (currently there is only one) that works for your vehicle. 
 from rotorpy.controllers.quadrotor_control import SE3Control
-from rotorpy.controllers.raptor import FoudationPolicy
+from rotorpy.controllers.raptor import RaptorFoundationPolicy
 
 # And a trajectory generator
 from rotorpy.trajectories.hover_traj import HoverTraj
@@ -60,9 +59,7 @@ world = World.from_file(os.path.abspath(os.path.join(os.path.dirname(__file__),'
 
 # An instance of the simulator can be generated as follows: 
 sim_instance = Environment(vehicle=Multirotor(quad_params),           # vehicle object, must be specified. 
-                        #    controller=SE3Control(quad_params),        # controller object, must be specified.
-                           controller=FoudationPolicy(quad_params),     # use RAPTOR policy
-                        #    trajectory=HoverTraj(x0=np.array([0, 0, 1])),         # trajectory object, must be specified.
+                           controller=RaptorFoundationPolicy(quad_params),     # use RAPTOR policy
                            trajectory=ThreeDCircularTraj(center=np.array([0,0,1]), radius=np.array([1,1,0])),         # trajectory object, must be specified.
                            wind_profile=None,               # OPTIONAL: wind profile object, if none is supplied it will choose no wind. 
                            sim_rate     = 100,                        # OPTIONAL: The update frequency of the simulator in Hz. Default is 100 Hz.

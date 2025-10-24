@@ -2,7 +2,7 @@ from foundation_policy import Raptor
 from scipy.spatial.transform import Rotation
 import numpy as np
 
-class FoudationPolicy(object):
+class RaptorFoundationPolicy(object):
     """
     implementing the RAPTOP policy
     """
