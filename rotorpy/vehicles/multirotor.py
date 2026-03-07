@@ -1,8 +1,11 @@
+from typing import List
 import numpy as np
 from numpy.linalg import inv, norm
 import scipy.integrate
 from scipy.spatial.transform import Rotation
 from rotorpy.vehicles.hummingbird_params import quad_params
+
+from scipy.spatial.transform import Rotation as R
 
 # imports for Batched Dynamics
 import torch
@@ -31,10 +34,7 @@ def quat_dot(quat, omega):
                   [-q2,  q3,  q0, -q1],
                   [ q1, -q0,  q3, -q2]])
     quat_dot = 0.5 * G.T @ omega
-    # Augment to maintain unit quaternion.
-    quat_err = np.sum(quat**2) - 1
-    quat_err_grad = 2 * quat
-    quat_dot = quat_dot - quat_err * quat_err_grad
+    # Rely on post-step renormalization instead of a penalty term
     return quat_dot
 
 
@@ -81,6 +81,8 @@ class Multirotor(object):
                                 'cmd_vel': the controller commands a velocity vector in the world frame. 
                                 'cmd_acc': the controller commands a mass normalized thrust vector (acceleration) in the world frame.
         aero: boolean, determines whether or not aerodynamic drag forces are computed. 
+        enable_ground: boolean, determines whether or not ground contact is enabled.
+        integrator_kwargs: dictionary of keyword arguments passed to scipy.integrate.solve_ivp
     """
     def __init__(self, quad_params, initial_state = {'x': np.array([0,0,0]),
                                             'v': np.zeros(3,),
@@ -90,7 +92,8 @@ class Multirotor(object):
                                             'rotor_speeds': np.array([1788.53, 1788.53, 1788.53, 1788.53])},
                        control_abstraction='cmd_motor_speeds',
                        aero = True,
-                       enable_ground = False  
+                       enable_ground = False,
+                       integrator_kwargs = None,
                 ):
         """
         Initialize quadrotor physical parameters.
@@ -150,6 +153,10 @@ class Multirotor(object):
                                      [0,            0,          self.c_Dz]])
         self.g = 9.81 # m/s^2
         self._enable_ground = enable_ground
+        # Ground contact horizontal friction (velocity clamp). Beta in [0.1, 0.5].
+        self.ground_friction_beta = float(quad_params.get('ground_friction_beta', 0.3))
+        # Clamp to a stable range
+        self.ground_friction_beta = max(0.1, min(0.5, self.ground_friction_beta))
 
         self.inv_inertia = inv(self.inertia)
         self.weight = np.array([0, 0, -self.mass*self.g])
@@ -168,6 +175,12 @@ class Multirotor(object):
         self.control_abstraction = control_abstraction
 
         self.aero = aero
+
+        # Integrator settings. 
+        if integrator_kwargs is None:
+            self.integrator_kwargs = {'method':'RK45'}
+        else:
+            self.integrator_kwargs = integrator_kwargs
 
     def extract_geometry(self):
         """
@@ -222,16 +235,24 @@ class Multirotor(object):
             return self._s_dot_fn(t, s, cmd_rotor_speeds)
         s = Multirotor._pack_state(state)
 
-        # Option 1 - RK45 integration
-        sol = scipy.integrate.solve_ivp(s_dot_fn, (0, t_step), s, first_step=t_step)
-        s = sol['y'][:,-1]
-        # Option 2 - Euler integration
-        # s = s + s_dot_fn(0, s) * t_step  # first argument doesn't matter. It's time invariant model
+        # Integrate
+        sol = scipy.integrate.solve_ivp(
+            s_dot_fn,
+            (0.0, t_step),
+            s,
+            **self.integrator_kwargs
+        )
+        s = sol['y'][:, -1]
 
+        # Unpack the state vector.
         state = Multirotor._unpack_state(s)
 
         # Re-normalize unit quaternion.
         state['q'] = state['q'] / norm(state['q'])
+        
+        # Apply ground constraints (unified across vehicles)
+        if self._enable_ground and self._on_ground(state):
+            state = self._handle_vehicle_on_ground(state)
 
         # Add noise to the motor speed measurement
         state['rotor_speeds'] += np.random.normal(scale=np.abs(self.motor_noise), size=(self.num_rotors,))
@@ -271,8 +292,12 @@ class Multirotor(object):
         # Rotate the force from the body frame to the inertial frame
         Ftot = R@FtotB
 
-        if self._on_ground(state) and self._enable_ground:
-            Ftot -= self.weight
+        # Ground reaction force: apply normal force when on ground to prevent penetration
+        if self._enable_ground and self._on_ground(state):
+            total_force_no_ground = self.weight + Ftot
+            if total_force_no_ground[2] < 0:
+                ground_normal_force = np.array([0, 0, -total_force_no_ground[2]])
+                Ftot += ground_normal_force
 
         # Velocity derivative.
         v_dot = (self.weight + Ftot) / self.mass
@@ -459,6 +484,31 @@ class Multirotor(object):
         """
         return state['x'][2] <= 0.001
 
+    def _handle_vehicle_on_ground(self, state):
+        """
+        Handle vehicle state while on ground.
+        - Clamp altitude to ground plane (z = 0)
+        - Prevent downward motion (v_z >= 0)
+        - Apply horizontal velocity damping to emulate friction
+        - Zero angular velocity and flatten attitude (keep yaw)
+        """
+        # Clamp position to ground
+        state['x'][2] = 0.0
+
+        # Prevent downward velocity
+        if state['v'][2] < 0.0:
+            state['v'][2] = 0.0
+
+        # Horizontal velocity damping (friction-like)
+        beta = self.ground_friction_beta
+        state['v'][0:2] = (1.0 - beta) * state['v'][0:2]
+
+        # Zero angular velocity and flatten attitude (keep yaw)
+        state['w'] = np.zeros(3,)
+        state['q'] = self.flatten_attitude(state['q'])
+
+        return state
+
     @classmethod
     def rotate_k(cls, q):
         """
@@ -520,6 +570,27 @@ class Multirotor(object):
         """
         state = {'x':s[0:3], 'v':s[3:6], 'q':s[6:10], 'w':s[10:13], 'wind':s[13:16], 'rotor_speeds':s[16:]}
         return state
+
+    @staticmethod
+    def flatten_attitude(quaternion : List[float]) -> List[float]:
+        """
+        Set roll and pitch to 0 while keeping yaw unchanged.
+        
+        Parameters:
+            quaternion (array-like): Quaternion [x, y, z, w] representing the quadrotor's attitude.
+        
+        Returns:
+            numpy.ndarray: New quaternion with roll and pitch set to 0.
+        """
+
+        # Extract Euler angles in the 'XYZ' (roll, pitch, heading) convention wrt the world frame
+        _, _, heading = R.from_quat(quaternion).as_euler('XYZ', degrees=False)
+        
+        # Create a new rotation object with roll and pitch set to 0
+        flattened_rotation = R.from_euler('Z', heading, degrees=False)
+        
+        # Convert the new rotation back to a quaternion
+        return flattened_rotation.as_quat()
 
 
 class BatchedMultirotorParams:

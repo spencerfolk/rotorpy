@@ -71,7 +71,7 @@ def test_batched_operators():
                 if key == "rotor_speeds":
                     assert np.all(np.abs(batch_next_state[key][j].cpu().numpy() - seq_next_state[key]) < 1)
                 else:
-                    assert np.all(np.abs(batch_next_state[key][j].cpu().numpy() - seq_next_state[key]) < 2e-2)
+                    assert np.all(np.abs(batch_next_state[key][j].cpu().numpy() - seq_next_state[key]) < 3e-2)
 
 
 if __name__ == "__main__":

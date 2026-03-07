@@ -78,9 +78,6 @@ class Ardupilot(Multirotor):
         if self._ardupilot_control:
             control = {'cmd_motor_speeds': self._motor_cmd_to_omega(self._control_cmd.cmd_motor_speeds)}
 
-        # TODO: this should be moved inside the `Multirotor` class
-        if self._on_ground(state) and self._enable_ground:
-            state = self._handle_vehicle_on_ground(state)
 
         statedot = self.statedot(state, control, t_step)
         state =  super().step(state, control, t_step)
@@ -94,36 +91,6 @@ class Ardupilot(Multirotor):
         
         return state
 
-    def _handle_vehicle_on_ground(
-        self, state: Dict[str, np.ndarray]
-    ) -> Dict[str, np.ndarray]:
-        """
-        Handles the vehicle's state when it is on the ground.
-        This method performs the following actions:
-        - Constrains the vehicle's position to the ground level (z = 0).
-        - Stops any downward vertical motion by setting the vertical velocity to zero if it is negative.
-        - Resets the angular velocity to zero to stop any spinning motion.
-        - Sets the pitch and roll angles to zero while preserving the heading angle.
-        Args:
-            state (Dict[str, np.ndarray]): The current state of the vehicle, which includes position ('x'),
-                                           velocity ('v'), angular velocity ('w'), orientation ('q'),
-                                           wind vector ('wind') and motor angular velocities ('rotor_speeds').
-        Returns:
-            Dict[str, np.ndarray]: The updated state of the vehicle after applying the ground constraints.
-        """
-        # FIXME: when the motor command is zero and the vehicle is on the ground it drifts (threshold issue?)
-        state["x"][2] = 0
-
-        if state["v"][2] < 0:
-            state["v"] = np.zeros(3,)
-
-        state["w"] = np.zeros(
-            3,
-        )
-
-        state["q"] = flatten_attitude(state["q"])
-
-        return state
 
     @staticmethod
     def _motor_cmd_to_omega(pwm_commands : List[int]) -> List[float]:
@@ -139,7 +106,35 @@ class Ardupilot(Multirotor):
         reordered_pwm_commands = [rotor_2, rotor_0, rotor_3, rotor_1]
         normalized_commands = [(c-PWM_MIN)/(PWM_MAX-PWM_MIN) for c in reordered_pwm_commands]
         angular_velocities = [838.0*c for c in normalized_commands] # TODO: remove magic constant
-        return angular_velocities      
+        return angular_velocities
+
+    @staticmethod
+    def _quaternion_rotorpy_to_aerospace(quaternion_glu2enu: np.ndarray) -> List[float]:
+        """
+        Convert quaternion from rotorpy convention to aerospace (ArduPilot) convention.
+        
+        Args:
+            quaternion_glu2enu (np.ndarray): Quaternion [x, y, z, w] (scalar-last) representing 
+                                           rotation from body frame (GLU) to world frame (ENU)
+        
+        Returns:
+            List[float]: Quaternion [w, x, y, z] (scalar-first) representing rotation from 
+                        world frame (NED) to body frame (FRD) - aerospace convention
+        
+        Notes:
+            - Input: rotorpy uses scalar-last [x, y, z, w] for GLU→ENU rotation
+            - Output: ArduPilot uses scalar-first [w, x, y, z] for NED→FRD rotation (inverse)
+            - Involves coordinate frame transformations: GLU↔FRD and ENU↔NED
+        """
+        # Convert rotorpy quaternion (GLU→ENU) to rotation object
+        R_glu2enu = R.from_quat(quaternion_glu2enu, scalar_first=False)
+        
+        # Transform to aerospace convention (NED→FRD)
+        # R_frd2ned represents the attitude of the FRD frame in the NED frame
+        R_frd2ned = Ardupilot.M_enu2ned * R_glu2enu * Ardupilot.M_glu2frd
+        
+        # Return as scalar-first quaternion [w, x, y, z]
+        return R_frd2ned.as_quat(scalar_first=True).tolist()      
 
     @staticmethod
     def _create_sensor_data(
@@ -167,24 +162,19 @@ class Ardupilot(Multirotor):
                         attitude quaternion, and angular velocities.
         """
 
-        # 1. Obtain attitude quaternion (scalar-first),
-        # representing the rotation from the body (GLU) frame to the world (ENU) frame
-        R_glu2enu = R.from_quat(state["q"], scalar_first=False)
+        # 1. Convert quaternion from rotorpy to aerospace convention
+        quaternion_aerospace = Ardupilot._quaternion_rotorpy_to_aerospace(state["q"])
 
-        # 2. Obtain the IMU meaurements in the GLU frame
+        # 2. Obtain the IMU measurements in the GLU frame and transform to FRD
         acceleration = copy.deepcopy(statedot)
         meas_dict = imu.measurement(state, acceleration, with_noise=enable_imu_noise)
         a_glu, omega_glu = meas_dict["accel"], meas_dict["gyro"]
         a_frd = Ardupilot.M_glu2frd.apply(a_glu).tolist()
         omega_frd = Ardupilot.M_glu2frd.apply(omega_glu).tolist()
 
-        # 2. Obtain the rotation from the body frame (FRD) to the world frame (NED)
-        # This is the attitude of the FRD frame in the NED frame
-        R_frd2ned = Ardupilot.M_enu2ned * R_glu2enu * Ardupilot.M_glu2frd
-
         return SensorData(
             state["x"].tolist(),
-            R_frd2ned.as_quat(scalar_first=True).tolist(),
+            quaternion_aerospace,
             state["v"].tolist(),
             xgyro=omega_frd[0],
             ygyro=omega_frd[1],
@@ -195,27 +185,8 @@ class Ardupilot(Multirotor):
         )
 
 
-def flatten_attitude(quaternion : List[float]) -> List[float]:
-    """
-    Set roll and pitch to 0 while keeping yaw unchanged.
-    
-    Parameters:
-        quaternion (array-like): Quaternion [x, y, z, w] representing the quadrotor's attitude.
-    
-    Returns:
-        numpy.ndarray: New quaternion with roll and pitch set to 0.
-    """
-
-    # Extract Euler angles in the 'XYZ' (roll, pitch, heading) convention wrt the world frame
-    _, _, heading = R.from_quat(quaternion).as_euler('XYZ', degrees=False)
-    
-    # Create a new rotation object with roll and pitch set to 0
-    flattened_rotation = R.from_euler('Z', heading, degrees=False)
-    
-    # Convert the new rotation back to a quaternion
-    return flattened_rotation.as_quat()
-
 if __name__ == '__main__':
+    import time
     r = R.from_euler('y', 0, degrees=True)
     initial_state = {'x': np.array([0,0,0]),
                                             'v': np.zeros(3,),
