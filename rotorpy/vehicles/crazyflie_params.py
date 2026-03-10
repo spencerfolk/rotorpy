@@ -52,7 +52,7 @@ quad_params = {
     'k_flap': 0.0,              # Flapping moment coefficient Nm/(rad*m/s**2) = kg*m/rad
 
     # Motor properties
-    'tau_m': 0.005,           # motor response time, seconds
+    'tau_m': 0.072,           # motor response time, seconds
     'rotor_speed_min': 0,       # rad/s
     'rotor_speed_max': 2500,    # rad/s
     'motor_noise_std': 0.0,     # rad/s
