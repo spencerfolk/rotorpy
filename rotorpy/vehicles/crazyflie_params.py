@@ -5,6 +5,7 @@ Additional sources:
     https://bitcraze.io/2015/02/measuring-propeller-rpm-part-3
     https://wiki.bitcraze.io/misc:investigations:thrust
     https://commons.erau.edu/cgi/viewcontent.cgi?article=2057&context=publication
+    "Data-Driven System Identification of Quadrotors Subject to Motor Delays", Eschmann et al. 2024. https://arxiv.org/abs/2404.07837
 Notes:
     k_thrust is inferred from 14.5 g thrust at 2500 rad/s
     k_drag is mostly made up
