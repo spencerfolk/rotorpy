@@ -2,12 +2,13 @@
 Physical parameters for a quadrotor. Values parameterize the inertia, motor dynamics, 
 rotor aerodynamics, parasitic drag, and rotor placement. 
 Additional sources:
-    https://bitcraze.io/2015/02/measuring-propeller-rpm-part-3
-    https://wiki.bitcraze.io/misc:investigations:thrust
-    https://commons.erau.edu/cgi/viewcontent.cgi?article=2057&context=publication
+    "How to Model Your Crazyflie Brushless", Grafe et al. 2026. https://arxiv.org/pdf/2603.05944
+    Chapter 6 in "Real Time Local Wind Inference for Robust Autonomous Navigation", PhD Thesis, Folk 2026. 
 Notes:
-    k_thrust is inferred from 14.5 g thrust at 2500 rad/s
-    k_drag is mostly made up
+    Values are for the Crazyflie Brushless with propeller guards. 
+    Lower level gains were hand picked and not necessarily matched to the real system. 
+    Drag values obtained from "Real Time Local Wind Inference for Robust Autonomous Navigation", slightly elevated due to additional payloads. 
+    Off-diagonal terms in the inertia should be identified in the future, but set to 0 for now. 
 """
 import numpy as np
 
@@ -16,10 +17,10 @@ d = 0.043  # Arm length
 quad_params = {
 
     # Inertial properties
-    'mass': 0.04,       # kg
-    'Ixx':  1.43e-5,    # kg*m^2
-    'Iyy':  1.43e-5,    # kg*m^2
-    'Izz':  2.89e-5,    # kg*m^2
+    'mass': 0.044,       # kg
+    'Ixx':  3.3e-5,    # kg*m^2
+    'Iyy':  3.6e-5,    # kg*m^2
+    'Izz':  5.9e-5,    # kg*m^2
     'Ixy':  0.0,        # kg*m^2
     'Iyz':  0.0,        # kg*m^2 
     'Ixz':  0.0,        # kg*m^2
@@ -44,15 +45,15 @@ quad_params = {
 
     # Rotor properties
     # See "System Identification of the Crazyflie 2.0 Nano Quadrocopter", Forster 2015.
-    'k_eta': 3.49e-08,          # thrust coefficient N/(rad/s)**2
+    'k_eta': 4.052e-08,          # thrust coefficient N/(rad/s)**2
     'k_m':   7.8e-10,           # yaw moment coefficient Nm/(rad/s)**2
-    'k_d':   20.9700e-07,       # rotor drag coefficient N/(rad*m/s**2) = kg/rad
-    'k_z':   1.339e-05,         # induced inflow coefficient N/(rad*m/s**2) = kg/rad
-    'k_h':   5.74e-4,           # translational lift coefficient (N/(m/s)**2) = kg/m
+    'k_d':   5.09e-06,       # rotor drag coefficient N/(rad*m/s**2) = kg/rad
+    'k_z':   1.19e-05,         # induced inflow coefficient N/(rad*m/s**2) = kg/rad
+    'k_h':   1.11e-3,           # translational lift coefficient (N/(m/s)**2) = kg/m
     'k_flap': 0.0,              # Flapping moment coefficient Nm/(rad*m/s**2) = kg*m/rad
 
     # Motor properties
-    'tau_m': 0.005,           # motor response time, seconds
+    'tau_m': 0.050,           # motor response time, seconds
     'rotor_speed_min': 0,       # rad/s
     'rotor_speed_max': 3100,    # rad/s
     'motor_noise_std': 0.0,     # rad/s
