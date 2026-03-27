@@ -57,7 +57,7 @@ class PX4Multirotor(Multirotor):
         lockstep=True,
         integrator_kwargs=None
     ):
-        integrator_kwargs = integrator_kwargs if integrator_kwargs is not None else {'method':'Radau', 'rtol':1e-3, 'atol':1e-6, 'max_step':0.01}
+        integrator_kwargs = integrator_kwargs if integrator_kwargs is not None else {'method':'RK45', 'rtol':1e-2, 'atol':1e-4, 'max_step':0.05}
         # If no initial state passed, initialize to hover at origin
         if initial_state is None:
             initial_state = {
@@ -88,6 +88,7 @@ class PX4Multirotor(Multirotor):
 
         self._autopilot_controller = autopilot_controller
         self._lockstep_enabled = lockstep
+        self._last_control = {'cmd_motor_speeds': np.zeros(quad_params['num_rotors'])}
 
     @staticmethod
     def enu_to_geodetic(
@@ -220,29 +221,67 @@ class PX4Multirotor(Multirotor):
             int(a_frd_mg[0]), int(a_frd_mg[1]), int(a_frd_mg[2])
         )
 
+    # Earth magnetic field at reference origin (lat=40°N, lon=-74.3°W) in NED frame, gauss.
+    # Values approximate WMM at sea level for New York area.
+    _MAG_NED_GAUSS = np.array([0.198, -0.030, 0.448])
+
+    def _mag_body_frd(self, state) -> np.ndarray:
+        """Return Earth magnetic field vector in body FRD frame (gauss)."""
+        # NED -> ENU: [N, E, D] -> [E, N, -D]
+        mag_enu = np.array([self._MAG_NED_GAUSS[1],
+                            self._MAG_NED_GAUSS[0],
+                            -self._MAG_NED_GAUSS[2]])
+        # Rotate from ENU world frame to FLU body frame via quaternion [qx, qy, qz, qw]
+        qx, qy, qz, qw = state['q']
+        R_WB = np.array([
+            [1 - 2*(qy**2 + qz**2), 2*(qx*qy - qz*qw), 2*(qx*qz + qy*qw)],
+            [2*(qx*qy + qz*qw),     1 - 2*(qx**2 + qz**2), 2*(qy*qz - qx*qw)],
+            [2*(qx*qz - qy*qw),     2*(qy*qz + qx*qw), 1 - 2*(qx**2 + qy**2)],
+        ])
+        mag_flu = R_WB.T @ mag_enu
+        # FLU -> FRD: negate Y and Z
+        return np.array([mag_flu[0], -mag_flu[1], -mag_flu[2]])
+
+    def _baro(self, state):
+        """Return (abs_pressure_hpa, pressure_alt_m, temperature_c) via standard atmosphere."""
+        alt_m = float(state['x'][2])   # ENU z = altitude above reference
+        P0 = 101325.0                  # Pa, sea-level standard pressure
+        T0 = 288.15                    # K,  sea-level standard temperature
+        abs_pressure_pa = P0 * (1.0 - alt_m / 44330.0) ** 5.2561
+        abs_pressure_hpa = abs_pressure_pa / 100.0
+        pressure_alt_m = 44330.0 * (1.0 - (abs_pressure_pa / P0) ** (1.0 / 5.2561))
+        temperature_c = T0 - 0.0065 * alt_m - 273.15
+        return abs_pressure_hpa, pressure_alt_m, temperature_c
+
     def _send_hil_sensor(self, state, statedot):
         """
         Send HIL_SENSOR message to PX4.
-        
+
         Args:
             state: Current vehicle state
             statedot: State derivative (computed externally)
         """
         # Get IMU measurements
-        a_ned, omega_ned = self._imu(state, statedot)
+        a_frd, omega_frd = self._imu(state, statedot)
 
-        # Only flag accel/gyro as updated (exclude mag and baro-related fields)
-        updated_bitmask = SensorSource.ACCEL | SensorSource.GYRO
+        # Magnetometer: Earth field rotated into body FRD frame (gauss)
+        mag_frd = self._mag_body_frd(state)
+
+        # Barometer: standard atmosphere from ENU altitude
+        abs_pressure_hpa, pressure_alt_m, temperature_c = self._baro(state)
+
+        updated_bitmask = (SensorSource.ACCEL | SensorSource.GYRO
+                           | SensorSource.MAG | SensorSource.BARO)
 
         self.conn.mav.hil_sensor_send(
             int(self.t * 1e6),
-            *tuple(a_ned),
-            *tuple(omega_ned),
-            *(0.0, 0.0, 0.0),       # Magnetometer (body frame)
-            0.0,                    # Abs pressure
-            0,                      # Differential pressure
-            0.0,                    # Altitude from pressure
-            25,                     # Temperature
+            *tuple(a_frd),
+            *tuple(omega_frd),
+            *tuple(mag_frd),
+            abs_pressure_hpa,
+            0.0,              # Differential pressure (not simulated)
+            pressure_alt_m,
+            temperature_c,
             fields_updated=updated_bitmask,
         )
 
@@ -258,9 +297,10 @@ class PX4Multirotor(Multirotor):
         if self._autopilot_controller:
             px4_control = self._fetch_latest_px4_control(blocking=self._lockstep_enabled)
             if px4_control is not None:
+                self._last_control = px4_control
                 control = px4_control
             else:
-                control = {'cmd_motor_speeds': np.zeros(self.num_rotors)}
+                control = self._last_control
 
         else: # In this case we use the control provided by the external controller
             pass
