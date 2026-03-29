@@ -2,7 +2,10 @@
 Imports
 """
 import numpy as np
-import torch
+try:
+    import torch
+except ImportError:
+    pass
 
 class TrajTemplate(object):
     """

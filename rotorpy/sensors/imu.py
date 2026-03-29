@@ -1,6 +1,9 @@
 import numpy as np
 from scipy.spatial.transform import Rotation
-import torch
+try:
+    import torch
+except ImportError:
+    pass
 import copy
 
 class Imu:

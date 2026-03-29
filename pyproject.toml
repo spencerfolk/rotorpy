@@ -29,14 +29,16 @@ dependencies = [
     'pandas',
     'tqdm',
     'gymnasium',
-    'roma',           # For batched sim
-    'torch>=1.11.0',  # For batched sim
-    'torchdiffeq',    # For batched sim
-    'opt-einsum',     # For batched sim
     'timed_count',    # Only for ardupilot sitl example
 ]
 
 [project.optional-dependencies]
+batched = [
+    'torch>=1.11.0',
+    'torchdiffeq',
+    'roma',
+    'opt-einsum',
+]
 learning = [
     'stable_baselines3',
     'tensorboard',
@@ -64,6 +66,10 @@ px4 = [
     'pymavlink',
 ]
 all = [
+    "torch>=1.11.0",
+    "torchdiffeq",
+    "roma",
+    "opt-einsum",
     "stable_baselines3",
     "tensorboard",
     "pytest",
