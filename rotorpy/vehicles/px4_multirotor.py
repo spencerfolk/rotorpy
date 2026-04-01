@@ -285,8 +285,8 @@ class PX4Multirotor(Multirotor):
             fields_updated=updated_bitmask,
         )
 
-    def step(self, state, control, t_step):        
-        
+    def step(self, state, control, t_step):
+
         # Compute state derivative once for state and messages
         # and send both HIL messages
         statedot = self.statedot(state, control, 0.0)
@@ -298,14 +298,13 @@ class PX4Multirotor(Multirotor):
             px4_control = self._fetch_latest_px4_control(blocking=self._lockstep_enabled)
             if px4_control is not None:
                 self._last_control = px4_control
-                control = px4_control
             else:
-                control = self._last_control
+                pass # Do not modify _last_control
 
         else: # In this case we use the control provided by the external controller
-            pass
-        
-        state = super().step(state, control, t_step)
+            self._last_control = control
+
+        state = super().step(state, self._last_control, t_step)
         self.state = state
         self.t += t_step
 

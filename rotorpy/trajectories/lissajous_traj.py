@@ -1,5 +1,8 @@
 import numpy as np
-import torch
+try:
+    import torch
+except ImportError:
+    pass
 
 """
 Lissajous curves are defined by trigonometric functions parameterized in time. 
