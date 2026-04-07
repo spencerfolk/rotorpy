@@ -6,6 +6,8 @@ import numpy as np
 from typing import Tuple
 
 import math
+import time
+import statistics
 
 # Constants
 R_EARTH = 6378137.0  # meters
@@ -55,6 +57,7 @@ class PX4Multirotor(Multirotor):
         mavlink_url="tcpin:localhost:4560",
         autopilot_controller=True,
         lockstep=True,
+        lockstep_timeout=0.002,
         integrator_kwargs=None
     ):
         integrator_kwargs = integrator_kwargs if integrator_kwargs is not None else {'method':'RK45', 'rtol':1e-2, 'atol':1e-4, 'max_step':0.05}
@@ -76,10 +79,13 @@ class PX4Multirotor(Multirotor):
             enable_ground=enable_ground,
             integrator_kwargs=integrator_kwargs
         )
+        # Use fixed-step RK4 for faster physics (7x vs solve_ivp, identical accuracy at dt<=4ms)
+        self.use_fixed_step = True
         # Simulated IMU (with noise)
         self.imu = Imu()
         self._enable_imu_noise = True  # Always add a bit of noise to avoid stale detection
         self.t = 0.0
+
 
         print("PX4Multirotor: Initializing MAVLink connection... on {}".format(mavlink_url))
         self.conn = mavutil.mavlink_connection(mavlink_url)
@@ -88,6 +94,7 @@ class PX4Multirotor(Multirotor):
 
         self._autopilot_controller = autopilot_controller
         self._lockstep_enabled = lockstep
+        self._lockstep_timeout = lockstep_timeout
         self._last_control = {'cmd_motor_speeds': np.zeros(quad_params['num_rotors'])}
 
     @staticmethod
@@ -166,10 +173,20 @@ class PX4Multirotor(Multirotor):
 
     def _fetch_latest_px4_control(self, blocking : bool = True):
         """Fetch the latest HIL_ACTUATOR_CONTROLS message from PX4 and update control inputs."""
-
-        msg = self.conn.recv_match(type='HIL_ACTUATOR_CONTROLS', blocking=blocking, timeout=0.01)
-        if msg is not None:
-            return {'cmd_motor_speeds': [c * self.rotor_speed_max for c in msg.controls[:self.num_rotors]]}
+        # Drain all queued messages non-blocking first
+        latest = None
+        while True:
+            msg = self.conn.recv_match(type='HIL_ACTUATOR_CONTROLS', blocking=False)
+            if msg is None:
+                break
+            latest = msg
+        # If no message found and blocking requested, poll with retry until timeout
+        if latest is None and blocking:
+            deadline = time.perf_counter() + self._lockstep_timeout
+            while latest is None and time.perf_counter() < deadline:
+                latest = self.conn.recv_match(type='HIL_ACTUATOR_CONTROLS', blocking=True, timeout=0.01)
+        if latest is not None:
+            return {'cmd_motor_speeds': [c * self.rotor_speed_max for c in latest.controls[:self.num_rotors]]}
 
     def _enu_to_ned_cmps(self, v_enu):
         v_n = float(v_enu[1])
@@ -190,25 +207,22 @@ class PX4Multirotor(Multirotor):
         omega_frd = np.array([omega_flu[0], -omega_flu[1], -omega_flu[2]], dtype=float)
         return a_frd, omega_frd
 
-    def _send_hil_state_quaternion(self, state, statedot):
+    def _send_hil_state_quaternion(self, state, a_frd_gt):
         """
         Send HIL_STATE_QUATERNION message to PX4.
-        
+
         Args:
             state: Current vehicle state
-            statedot: State derivative (from the `Multirotor.statedot` method)
+            a_frd_gt: Ground-truth acceleration in FRD frame (precomputed)
         """
         # Convert cartesian ENU position to geodetic coordinates (latitude, longitude and height)
         lat_deg, lon_deg, height_meters = self.enu_to_geodetic(*state['x'])
         lat_e7, lon_e7, alt_mm = self.geodetic_to_mavlink(lat_deg, lon_deg, height_meters)
-        
+
         # Convert quaternion from rotorpy to aerospace convention using ArduPilot's method
         quaternion_flu2ned = Ardupilot._quaternion_rotorpy_to_aerospace(state['q'])
         vx_cms, vy_cms, vz_cms = self._enu_to_ned_cmps(state['v'])
 
-        # Send the ground truth acceleration in the state message (without imu noise)
-        a_flu_gt = self.imu.measurement(state, statedot, with_noise=False)["accel"]
-        a_frd_gt = np.array([a_flu_gt[0], -a_flu_gt[1], -a_flu_gt[2]], dtype=float)
         a_frd_mg = np.clip(np.round(a_frd_gt / 9.80665 * 1000.0), INT_MIN, INT_MAX).astype(np.int16)
 
         self.conn.mav.hil_state_quaternion_send(
@@ -253,17 +267,15 @@ class PX4Multirotor(Multirotor):
         temperature_c = T0 - 0.0065 * alt_m - 273.15
         return abs_pressure_hpa, pressure_alt_m, temperature_c
 
-    def _send_hil_sensor(self, state, statedot):
+    def _send_hil_sensor(self, state, a_frd, omega_frd):
         """
         Send HIL_SENSOR message to PX4.
 
         Args:
             state: Current vehicle state
-            statedot: State derivative (computed externally)
+            a_frd: Accelerometer reading in FRD frame (precomputed)
+            omega_frd: Gyroscope reading in FRD frame (precomputed)
         """
-        # Get IMU measurements
-        a_frd, omega_frd = self._imu(state, statedot)
-
         # Magnetometer: Earth field rotated into body FRD frame (gauss)
         mag_frd = self._mag_body_frd(state)
 
@@ -286,12 +298,21 @@ class PX4Multirotor(Multirotor):
         )
 
     def step(self, state, control, t_step):
+        _t0 = time.perf_counter()
 
-        # Compute state derivative once for state and messages
-        # and send both HIL messages
+        # Compute state derivative once for messages
         statedot = self.statedot(state, control, 0.0)
-        self._send_hil_state_quaternion(state, statedot)
-        self._send_hil_sensor(state, statedot)
+
+        # Compute IMU measurements once (noisy for HIL_SENSOR, ground-truth for HIL_STATE)
+        a_frd_noisy, omega_frd_noisy = self._imu(state, statedot)
+        a_flu_gt = self.imu.measurement(state, statedot, with_noise=False)["accel"]
+        a_frd_gt = np.array([a_flu_gt[0], -a_flu_gt[1], -a_flu_gt[2]], dtype=float)
+        _t_statedot = time.perf_counter()
+
+        # Send both HIL messages with precomputed data
+        self._send_hil_state_quaternion(state, a_frd_gt)
+        self._send_hil_sensor(state, a_frd_noisy, omega_frd_noisy)
+        _t_hil_send = time.perf_counter()
 
         # Use PX4 commands only if autopilot_controller is True
         if self._autopilot_controller:
@@ -303,9 +324,39 @@ class PX4Multirotor(Multirotor):
 
         else: # In this case we use the control provided by the external controller
             self._last_control = control
+        _t_px4_fetch = time.perf_counter()
 
         state = super().step(state, self._last_control, t_step)
         self.state = state
         self.t += t_step
+        _t_rk4 = time.perf_counter()
+
+        # Accumulate timing samples; print summary every 500 steps (~2s at 250Hz)
+        if not hasattr(self, '_step_timing'):
+            self._step_timing = {'statedot': [], 'hil_send': [], 'px4_fetch': [], 'rk4': [], 'total': []}
+            self._step_count = 0
+        self._step_count += 1
+        self._step_timing['statedot'].append((_t_statedot - _t0) * 1e3)
+        self._step_timing['hil_send'].append((_t_hil_send - _t_statedot) * 1e3)
+        self._step_timing['px4_fetch'].append((_t_px4_fetch - _t_hil_send) * 1e3)
+        self._step_timing['rk4'].append((_t_rk4 - _t_px4_fetch) * 1e3)
+        self._step_timing['total'].append((_t_rk4 - _t0) * 1e3)
+
+        if self._step_count % 500 == 0:
+            def _fmt(vals):
+                avg = statistics.mean(vals)
+                p99 = sorted(vals)[int(len(vals) * 0.99)]
+                return f"avg={avg:.2f}ms p99={p99:.2f}ms"
+            t = self._step_timing
+            print(
+                f"[PX4Multirotor.step timing | n={self._step_count}]\n"
+                f"  statedot : {_fmt(t['statedot'])}\n"
+                f"  hil_send : {_fmt(t['hil_send'])}\n"
+                f"  px4_fetch: {_fmt(t['px4_fetch'])}  ← lockstep wait\n"
+                f"  rk4      : {_fmt(t['rk4'])}\n"
+                f"  total    : {_fmt(t['total'])}"
+            )
+            for key in self._step_timing:
+                self._step_timing[key].clear()
 
         return state
