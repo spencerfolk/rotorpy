@@ -1,5 +1,8 @@
 import numpy as np
-import torch
+try:
+    import torch
+except ImportError:
+    pass
 import os
 import sys
 
