@@ -22,7 +22,7 @@ def interp_path(path, res):
 
 class World(object):
 
-    def __init__(self, world_data):
+    def __init__(self, world_data, add_features=False, feature_mode='regular', feature_spacing=0.2, N_features_per_surface=100, seed=None):
         """
         Construct World object from data. Instead of using this constructor
         directly, see also class methods 'World.from_file()' for building a
@@ -36,8 +36,23 @@ class World(object):
                 blocks, list of dicts containing keys 'extents' and 'color'
                     extents, list of [xmin, xmax, ymin, ymax, zmin, zmax]
                     color, color specification
+            add_features, if True, generates surface features on all block faces
+            feature_spacing, spacing between grid points (only for regular grid feature generation)
+            N_features_per_surface, number of features per surface (only for random feature generation)
+            seed, random seed for reproducibility (only for random feature generation)
         """
         self.world = world_data
+        self.add_features = add_features
+        self.feature_mode = feature_mode
+        self.feature_spacing = feature_spacing
+        self.N_features_per_surface = N_features_per_surface
+        self.seed = seed
+
+        # Generate surface features if requested.
+        self._surface_features = None
+        self._feature_blocks = None
+        if add_features:
+            self.generate_surface_features(mode=self.feature_mode, spacing=self.feature_spacing, N_features_per_surface=self.N_features_per_surface, seed=self.seed)
 
     @classmethod
     def from_file(cls, filename):
@@ -97,6 +112,88 @@ class World(object):
             closest_points[mask, :] = p[mask, :]
             closest_distances[mask] = d[mask]
         return (closest_points, closest_distances)
+
+    def generate_surface_features(self, mode='regular', spacing=0.2, N_features_per_surface=100, seed=None):
+        """
+        Generate feature points on all exposed block surfaces.
+
+        Parameters:
+            mode, 'regular' for grid pattern or 'random' for random points
+            spacing, spacing between grid points (only for 'regular' mode)
+            N_features_per_surface, number of features per surface (only for 'random' mode)
+            seed, random seed for reproducibility
+
+        Returns:
+            features: (N, 3) array of world coordinate features generated on block surfaces
+            features_metadata: dict with keys 'block_idx', 'surface' for each feature
+        """
+        if seed is not None:
+            np.random.seed(seed)
+
+        features = []
+        metadata = []
+
+        for block_idx, block in enumerate(self.world.get('blocks', [])):
+            extents = block['extents']
+            xmin, xmax, ymin, ymax, zmin, zmax = extents
+
+            all_faces = [
+                ('xmin', xmin, ymin, ymax, zmin, zmax),
+                ('xmax', xmax, ymin, ymax, zmin, zmax),
+                ('ymin', ymin, xmin, xmax, zmin, zmax),
+                ('ymax', ymax, xmin, xmax, zmin, zmax),
+                ('zmin', zmin, xmin, xmax, ymin, ymax),
+                ('zmax', zmax, xmin, xmax, ymin, ymax),
+            ]
+
+            for face_name, fixedCoord, u1, u2, v1, v2 in all_faces:
+                u_range = np.arange(u1, u2 + spacing/2, spacing)
+                v_range = np.arange(v1, v2 + spacing/2, spacing)
+
+                if len(u_range) < 2 or len(v_range) < 2:
+                    continue
+
+                if mode == 'regular':
+                    UU, VV = np.meshgrid(u_range, v_range)
+                    if face_name in ['xmin', 'xmax']:
+                        points_face = np.column_stack([np.full(UU.size, fixedCoord), UU.ravel(), VV.ravel()])
+                    elif face_name in ['ymin', 'ymax']:
+                        points_face = np.column_stack([UU.ravel(), np.full(UU.size, fixedCoord), VV.ravel()])
+                    else:
+                        points_face = np.column_stack([UU.ravel(), VV.ravel(), np.full(UU.size, fixedCoord)])
+                elif mode == 'random':
+                    n_pts = N_features_per_surface
+                    u_range_size = u2 - u1
+                    v_range_size = v2 - v1
+                    if u_range_size > 0 and v_range_size > 0:
+                        u_samples = np.random.uniform(u1 + u_range_size*0.02, u2 - u_range_size*0.02, n_pts)
+                        v_samples = np.random.uniform(v1 + v_range_size*0.02, v2 - v_range_size*0.02, n_pts)
+                    else:
+                        u_samples = np.full(n_pts, u1)
+                        v_samples = np.linspace(v1, v2, n_pts)
+                    
+                    if face_name in ['xmin', 'xmax']:
+                        points_face = np.column_stack([np.full(n_pts, fixedCoord), u_samples, v_samples])
+                    elif face_name in ['ymin', 'ymax']:
+                        points_face = np.column_stack([u_samples, np.full(n_pts, fixedCoord), v_samples])
+                    else:
+                        points_face = np.column_stack([u_samples, v_samples, np.full(n_pts, fixedCoord)])
+                else:
+                    raise ValueError(f"Unknown mode: {mode}")
+
+                features.append(points_face)
+                metadata.extend([{'block_idx': block_idx, 'surface': face_name}] * len(points_face))
+
+        if len(features) == 0:
+            return np.empty((0, 3)), []
+
+        features = np.vstack(features)
+        metadata = metadata
+
+        self._surface_features = features
+        self._feature_blocks = [m['block_idx'] for m in metadata]
+
+        return features, metadata
 
     def min_dist_boundary(self, points):
         """
@@ -204,16 +301,34 @@ class World(object):
         for p in np.array_split(points, 20):
             ax.scatter(p[:,0], p[:,1], p[:,2], s=markersize**2, c=color, edgecolors='none', depthshade=False)
 
+    def get_block_bounding_boxes(self):
+        """
+        Get axis-aligned bounding boxes for all blocks.
+
+        Returns:
+            boxes: list of (xmin, xmax, ymin, ymax, zmin, zmax) tuples for each block
+        """
+        boxes = []
+        for block in self.world.get('blocks', []):
+            boxes.append(block['extents'])
+        return boxes
+
+    def get_surface_features(self):
+        """Return the cached surface features if they exist."""
+        return self._surface_features
+
     # The follow class methods are convenience functions for building different
     # kinds of parametric worlds.
 
     @classmethod
-    def empty(cls, extents):
+    def empty(cls, extents, add_features=False, **surface_kwargs):
         """
         Return World object for bounded empty space.
 
         Parameters:
             extents, tuple of (xmin, xmax, ymin, ymax, zmin, zmax)
+            add_features, if True, generates surface features
+            surface_kwargs, keyword arguments for surface feature generation (see generate_surface_features)
 
         Returns:
             world, World object
@@ -224,10 +339,10 @@ class World(object):
         bounds = {'extents': extents}
         blocks = []
         world_data = {'bounds': bounds, 'blocks': blocks}
-        return cls(world_data)
+        return cls(world_data, add_features=add_features, feature_mode=surface_kwargs.get('feature_mode', 'regular'), feature_spacing=surface_kwargs.get('feature_spacing', 0.2), N_features_per_surface=surface_kwargs.get('N_features_per_surface', 100), seed=surface_kwargs.get('seed', None))
 
     @classmethod
-    def grid_forest(cls, n_rows, n_cols, width, height, spacing):
+    def grid_forest(cls, n_rows, n_cols, width, height, spacing, add_features=False, **surface_kwargs):
         """
         Return World object describing a grid forest world parameterized by
         arguments. The boundary extents fit tightly to the included trees.
@@ -238,6 +353,8 @@ class World(object):
             width, weight of square cross section trees
             height, height of trees
             spacing, spacing between centers of rows and columns
+            add_features, if True, generates surface features
+            surface_kwargs, keyword arguments for surface feature generation (see generate_surface_features)
 
         Returns:
             world, World object
@@ -260,10 +377,10 @@ class World(object):
                 blocks.append({'extents': [x, x+width, y, y+width, 0, height], 'color': [1, 0, 0]})
 
         world_data = {'bounds': bounds, 'blocks': blocks}
-        return cls(world_data)
+        return cls(world_data, add_features=add_features, feature_mode=surface_kwargs.get('feature_mode', 'regular'), feature_spacing=surface_kwargs.get('feature_spacing', 0.2), N_features_per_surface=surface_kwargs.get('N_features_per_surface', 100), seed=surface_kwargs.get('seed', None))
 
     @classmethod
-    def random_forest(cls, world_dims, tree_width, tree_height, num_trees):
+    def random_forest(cls, world_dims, tree_width, tree_height, num_trees, add_features=False, **surface_kwargs):
         """
         Return World object describing a random forest world parameterized by
         arguments.
@@ -273,10 +390,15 @@ class World(object):
             tree_width, weight of square cross section trees
             tree_height, height of trees
             num_trees, number of trees
+            add_features, if True, generates surface features
+            surface_kwargs, keyword arguments for surface feature generation (see generate_surface_features)
 
         Returns:
             world, World object
         """
+
+        if 'seed' in surface_kwargs:
+            np.random.seed(surface_kwargs['seed'])
 
         # Bounds are outer boundary for world, which are an implicit obstacle.
         bounds = {'extents': [0, world_dims[0], 0, world_dims[1], 0, world_dims[2]]}
@@ -292,7 +414,7 @@ class World(object):
             blocks.append({'extents': extents, 'color': [1, 0, 0]})
 
         world_data = {'bounds': bounds, 'blocks': blocks}
-        return cls(world_data)
+        return cls(world_data, add_features=add_features, feature_mode=surface_kwargs.get('feature_mode', 'regular'), feature_spacing=surface_kwargs.get('feature_spacing', 0.2), N_features_per_surface=surface_kwargs.get('N_features_per_surface', 100), seed=surface_kwargs.get('seed', None))
 
 
 if __name__ == '__main__':
