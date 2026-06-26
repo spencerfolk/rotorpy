@@ -213,7 +213,7 @@ def safety_exit(world, margin, state, flat, control):
     """
     Return exit status if any safety condition is violated, otherwise None.
     """
-    if np.any(np.abs(state['v']) > 20):
+    if np.any(np.abs(state['v']) > 100):
         return ExitStatus.OVER_SPEED
     if np.any(np.abs(state['w']) > 100):
         return ExitStatus.OVER_SPIN
