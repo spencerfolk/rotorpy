@@ -58,10 +58,10 @@ quad_params = {
     'rotor_speed_max': 2500,    # rad/s
     'motor_noise_std': 0.0,     # rad/s
 
-    # Lower level controller properties (for higher level control abstractions)
-    'k_w': 1,               # The body rate P gain (for cmd_ctbr)
+    # Lower level controller properties
+    'k_w': 200,               # The body rate P gain (for cmd_ctbr)
     'k_v': 10,              # The *world* velocity P gain (for cmd_vel)
-    'kp_att': 1030,      # The attitude P gain (for cmd_vel, cmd_acc, and cmd_ctatt)
-    'kd_att': 51,       # The attitude D gain (for cmd_vel, cmd_acc, and cmd_ctatt)
+    'kp_att': 310,      # The attitude P gain (for cmd_vel, cmd_acc, and cmd_ctatt)
+    'kd_att': 57.0,       # The attitude D gain (for cmd_vel, cmd_acc, and cmd_ctatt)
 
 }
