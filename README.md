@@ -105,6 +105,9 @@ results = sim_instance.run(t_final      = 20,       # The maximum duration of th
 
 ```
 
+#### Simulated vision / camera sensor
+RotorPy includes a fast, non-photorealistic pinhole camera sensor for learning or developing computer vision algorithms (visual odometry, image correspondence, etc.). World blocks can carry visual features (3D positions with descriptors) generated as regular grids or random splatter (`World.grid_forest(..., add_features=True)`), and `PinholeCamera.render()` projects those features into an image with a customizable pinhole + distortion model while explicitly handling occlusion too. A torch-parallel `BatchedPinholeCamera` renders from many vehicles simultaneously. See `rotorpy/examples/camera_visualization.py` for a complete example, and `rotorpy/sensors/` for the sensor docs.
+
 #### Reinforcement Learning
 New in `v1.1.0`, RotorPy includes a custom Gymnasium environment, `QuadrotorEnv`, which is a stripped down version of the regular simulation environment intended for applications in reinforcement learning. `QuadrotorEnv` features all the aerodynamics and motor dynamics, but also supports different control abstractions ranging from high level velocity vector commands all the way down to direct individual motor speed commands. This environment also allows the user to specify their own reward function. 
 

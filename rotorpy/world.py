@@ -1,5 +1,6 @@
 import json
 import numpy as np
+import matplotlib.colors
 
 from rotorpy.utils.shapes import Cuboid
 from rotorpy.utils.numpy_encoding import NumpyJSONEncoder, to_ndarray
@@ -22,7 +23,7 @@ def interp_path(path, res):
 
 class World(object):
 
-    def __init__(self, world_data, add_features=False, feature_mode='regular', feature_spacing=0.2, N_features_per_surface=100, seed=None):
+    def __init__(self, world_data, add_features=False, feature_mode='regular', feature_spacing=0.2, N_features_per_surface=100, seed=None, descriptor_noise=0.05):
         """
         Construct World object from data. Instead of using this constructor
         directly, see also class methods 'World.from_file()' for building a
@@ -40,6 +41,8 @@ class World(object):
             feature_spacing, spacing between grid points (only for regular grid feature generation)
             N_features_per_surface, number of features per surface (only for random feature generation)
             seed, random seed for reproducibility (only for random feature generation)
+            descriptor_noise, standard deviation of Gaussian jitter added to each block's
+                color to form per-feature RGB descriptors
         """
         self.world = world_data
         self.add_features = add_features
@@ -47,12 +50,14 @@ class World(object):
         self.feature_spacing = feature_spacing
         self.N_features_per_surface = N_features_per_surface
         self.seed = seed
+        self.descriptor_noise = descriptor_noise
 
         # Generate surface features if requested.
         self._surface_features = None
         self._feature_blocks = None
+        self._feature_descriptors = None
         if add_features:
-            self.generate_surface_features(mode=self.feature_mode, spacing=self.feature_spacing, N_features_per_surface=self.N_features_per_surface, seed=self.seed)
+            self.generate_surface_features(mode=self.feature_mode, spacing=self.feature_spacing, N_features_per_surface=self.N_features_per_surface, seed=self.seed, descriptor_noise=self.descriptor_noise)
 
     @classmethod
     def from_file(cls, filename):
@@ -113,7 +118,7 @@ class World(object):
             closest_distances[mask] = d[mask]
         return (closest_points, closest_distances)
 
-    def generate_surface_features(self, mode='regular', spacing=0.2, N_features_per_surface=100, seed=None):
+    def generate_surface_features(self, mode='regular', spacing=0.2, N_features_per_surface=100, seed=None, descriptor_noise=0.05):
         """
         Generate feature points on all exposed block surfaces.
 
@@ -122,6 +127,8 @@ class World(object):
             spacing, spacing between grid points (only for 'regular' mode)
             N_features_per_surface, number of features per surface (only for 'random' mode)
             seed, random seed for reproducibility
+            descriptor_noise, standard deviation of Gaussian jitter added to each block's
+                color to form per-feature RGB descriptors
 
         Returns:
             features: (N, 3) array of world coordinate features generated on block surfaces
@@ -132,10 +139,17 @@ class World(object):
 
         features = []
         metadata = []
+        descriptors = []
 
         for block_idx, block in enumerate(self.world.get('blocks', [])):
             extents = block['extents']
             xmin, xmax, ymin, ymax, zmin, zmax = extents
+
+            # Determine the base RGB color of this block.
+            color = block.get('color', [0.6, 0.6, 0.6])
+            if isinstance(color, str):
+                color = matplotlib.colors.to_rgb(color)
+            base_color = np.asarray(color, dtype=np.float64)
 
             all_faces = [
                 ('xmin', xmin, ymin, ymax, zmin, zmax),
@@ -181,17 +195,26 @@ class World(object):
                 else:
                     raise ValueError(f"Unknown mode: {mode}")
 
+                descriptors_face = base_color + np.random.normal(0.0, descriptor_noise, size=points_face.shape)
+                descriptors_face = np.clip(descriptors_face, 0.0, 1.0)
+
                 features.append(points_face)
+                descriptors.append(descriptors_face)
                 metadata.extend([{'block_idx': block_idx, 'surface': face_name}] * len(points_face))
 
         if len(features) == 0:
+            self._surface_features = np.empty((0, 3))
+            self._feature_blocks = []
+            self._feature_descriptors = np.empty((0, 3))
             return np.empty((0, 3)), []
 
         features = np.vstack(features)
+        descriptors = np.vstack(descriptors)
         metadata = metadata
 
         self._surface_features = features
         self._feature_blocks = [m['block_idx'] for m in metadata]
+        self._feature_descriptors = descriptors
 
         return features, metadata
 
@@ -317,6 +340,10 @@ class World(object):
         """Return the cached surface features if they exist."""
         return self._surface_features
 
+    def get_feature_descriptors(self):
+        """Return the cached feature descriptors if they exist."""
+        return self._feature_descriptors
+
     # The follow class methods are convenience functions for building different
     # kinds of parametric worlds.
 
@@ -339,7 +366,7 @@ class World(object):
         bounds = {'extents': extents}
         blocks = []
         world_data = {'bounds': bounds, 'blocks': blocks}
-        return cls(world_data, add_features=add_features, feature_mode=surface_kwargs.get('feature_mode', 'regular'), feature_spacing=surface_kwargs.get('feature_spacing', 0.2), N_features_per_surface=surface_kwargs.get('N_features_per_surface', 100), seed=surface_kwargs.get('seed', None))
+        return cls(world_data, add_features=add_features, feature_mode=surface_kwargs.get('feature_mode', 'regular'), feature_spacing=surface_kwargs.get('feature_spacing', 0.2), N_features_per_surface=surface_kwargs.get('N_features_per_surface', 100), seed=surface_kwargs.get('seed', None), descriptor_noise=surface_kwargs.get('descriptor_noise', 0.05))
 
     @classmethod
     def grid_forest(cls, n_rows, n_cols, width, height, spacing, add_features=False, **surface_kwargs):
@@ -377,7 +404,7 @@ class World(object):
                 blocks.append({'extents': [x, x+width, y, y+width, 0, height], 'color': [1, 0, 0]})
 
         world_data = {'bounds': bounds, 'blocks': blocks}
-        return cls(world_data, add_features=add_features, feature_mode=surface_kwargs.get('feature_mode', 'regular'), feature_spacing=surface_kwargs.get('feature_spacing', 0.2), N_features_per_surface=surface_kwargs.get('N_features_per_surface', 100), seed=surface_kwargs.get('seed', None))
+        return cls(world_data, add_features=add_features, feature_mode=surface_kwargs.get('feature_mode', 'regular'), feature_spacing=surface_kwargs.get('feature_spacing', 0.2), N_features_per_surface=surface_kwargs.get('N_features_per_surface', 100), seed=surface_kwargs.get('seed', None), descriptor_noise=surface_kwargs.get('descriptor_noise', 0.05))
 
     @classmethod
     def random_forest(cls, world_dims, tree_width, tree_height, num_trees, add_features=False, **surface_kwargs):
@@ -414,7 +441,7 @@ class World(object):
             blocks.append({'extents': extents, 'color': [1, 0, 0]})
 
         world_data = {'bounds': bounds, 'blocks': blocks}
-        return cls(world_data, add_features=add_features, feature_mode=surface_kwargs.get('feature_mode', 'regular'), feature_spacing=surface_kwargs.get('feature_spacing', 0.2), N_features_per_surface=surface_kwargs.get('N_features_per_surface', 100), seed=surface_kwargs.get('seed', None))
+        return cls(world_data, add_features=add_features, feature_mode=surface_kwargs.get('feature_mode', 'regular'), feature_spacing=surface_kwargs.get('feature_spacing', 0.2), N_features_per_surface=surface_kwargs.get('N_features_per_surface', 100), seed=surface_kwargs.get('seed', None), descriptor_noise=surface_kwargs.get('descriptor_noise', 0.05))
 
 
 if __name__ == '__main__':
