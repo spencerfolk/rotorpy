@@ -58,8 +58,8 @@ class SE3Control(object):
         # Gains  
         self.kp_pos = np.array([6.5,6.5,15])
         self.kd_pos = np.array([4.0, 4.0, 9])
-        self.kp_att = 544
-        self.kd_att = 46.64
+        self.kp_att = quad_params.get("kp_att", 310)
+        self.kd_att = quad_params.get("kd_att", 57.0)
         self.kp_vel = 0.1*self.kp_pos   # P gain for velocity controller (only used when the control abstraction is cmd_vel)
 
         # Linear map from individual rotor forces to scalar thrust and vector
