@@ -10,13 +10,30 @@ class HoverTraj(object):
     By modifying the initial condition, you can create step response
     experiments.
     """
-    def __init__(self, x0=np.array([0, 0, 0])):
+    def __init__(self, x0=np.array([0, 0, 0]), yaw_traj=None):
         """
         This is the constructor for the Trajectory object. A fresh trajectory
         object will be constructed before each mission.
+
+        Parameters:
+            x0, initial position (3,), default is the origin
+            yaw_traj, yaw trajectory controller. Can be:
+                None    - yaw is fixed at 0 (default)
+                'forward' - yaw tracks the velocity direction (uses ForwardYaw)
+                object  - any object with an update(t, x_dot) method returning
+                          a dict with keys 'yaw', 'yaw_dot', 'yaw_ddot'
         """
 
         self.x0 = x0
+        self._init_yaw_traj(yaw_traj)
+
+    def _init_yaw_traj(self, yaw_traj):
+        """Initialize the yaw trajectory controller."""
+        if yaw_traj == 'forward':
+            from rotorpy.trajectories.yaw_controllers import ForwardYaw
+            self._yaw_traj = ForwardYaw()
+        else:
+            self._yaw_traj = yaw_traj
 
     def update(self, t):
         """
@@ -39,9 +56,16 @@ class HoverTraj(object):
         x_ddot = np.zeros((3,))
         x_dddot = np.zeros((3,))
         x_ddddot = np.zeros((3,))
-        yaw    = 0
-        yaw_dot = 0
-        yaw_ddot = 0
+
+        if self._yaw_traj is not None:
+            yaw_out = self._yaw_traj.update(t, x_dot)
+            yaw = yaw_out['yaw']
+            yaw_dot = yaw_out['yaw_dot']
+            yaw_ddot = yaw_out['yaw_ddot']
+        else:
+            yaw    = 0
+            yaw_dot = 0
+            yaw_ddot = 0
 
         flat_output = { 'x':x, 'x_dot':x_dot, 'x_ddot':x_ddot, 'x_dddot':x_dddot, 'x_ddddot':x_ddddot,
                         'yaw':yaw, 'yaw_dot':yaw_dot, 'yaw_ddot':yaw_ddot}

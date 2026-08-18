@@ -51,7 +51,7 @@ def test_trajectories_update_method():
     print("\nTesting input signatures for all trajectory classes...")
     for file in traj_files:
         traj_name = os.path.basename(file)[:-3]  # Remove '.py' extension
-        if traj_name != '__init__': # Ignore the __init__.py file
+        if traj_name != '__init__' and traj_name != 'yaw_controllers': # Ignore the __init__.py and yaw_controllers files
             print(f"Importing trajectory classes from {traj_name}")
             traj_module = importlib.import_module(f"rotorpy.trajectories.{traj_name}")  # Import the module
             traj_classes = inspect.getmembers(traj_module, inspect.isclass)            # Get all classes in the module

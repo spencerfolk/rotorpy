@@ -14,7 +14,7 @@ class TwoDLissajous(object):
     The standard Lissajous on the XY curve as defined by https://en.wikipedia.org/wiki/Lissajous_curve
     This is planar in the XY plane at a fixed height. 
     """
-    def __init__(self, A=1, B=1, a=1, b=1, delta=0, x_offset=0, y_offset=0, height=0, yaw_bool=False):
+    def __init__(self, A=1, B=1, a=1, b=1, delta=0, x_offset=0, y_offset=0, height=0, yaw_bool=False, yaw_traj=None):
         """
         This is the constructor for the Trajectory object. A fresh trajectory
         object will be constructed before each mission.
@@ -28,7 +28,13 @@ class TwoDLissajous(object):
             x_offset := the offset of the trajectory in the x axis
             y_offset := the offset of the trajectory in the y axis
             height := the z height that the lissajous occurs at
-            yaw_bool := determines whether the vehicle should yaw
+            yaw_bool := determines whether the vehicle should yaw (legacy)
+            yaw_traj, yaw trajectory controller. Can be:
+                None    - yaw is fixed at 0 (or uses yaw_bool if set)
+                'forward' - yaw tracks the velocity direction (uses ForwardYaw)
+                object  - any object with an update(t, x_dot) method returning
+                          a dict with keys 'yaw', 'yaw_dot', 'yaw_ddot'
+                When yaw_traj is provided it takes precedence over yaw_bool.
         """
 
         self.A, self.B = A, B
@@ -39,6 +45,15 @@ class TwoDLissajous(object):
         self.y_offset = y_offset
 
         self.yaw_bool = yaw_bool
+        self._init_yaw_traj(yaw_traj)
+
+    def _init_yaw_traj(self, yaw_traj):
+        """Initialize the yaw trajectory controller."""
+        if yaw_traj == 'forward':
+            from rotorpy.trajectories.yaw_controllers import ForwardYaw
+            self._yaw_traj = ForwardYaw()
+        else:
+            self._yaw_traj = yaw_traj
 
     def update(self, t):
         """
@@ -72,7 +87,12 @@ class TwoDLissajous(object):
                              (self.b)**4*self.B*np.sin(self.b*t),
                              0])
 
-        if self.yaw_bool:
+        if self._yaw_traj is not None:
+            yaw_out = self._yaw_traj.update(t, x_dot)
+            yaw = yaw_out['yaw']
+            yaw_dot = yaw_out['yaw_dot']
+            yaw_ddot = yaw_out['yaw_ddot']
+        elif self.yaw_bool:
             yaw = np.pi/4*np.sin(np.pi*t)
             yaw_dot = np.pi*np.pi/4*np.cos(np.pi*t)
             yaw_ddot = np.pi*np.pi*np.pi/4*np.cos(np.pi*t)
