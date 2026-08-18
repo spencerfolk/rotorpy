@@ -1,6 +1,9 @@
 import numpy as np
 import sys
-import torch
+try:
+    import torch
+except ImportError:
+    pass
 import math
 import random
 

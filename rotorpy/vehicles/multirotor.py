@@ -8,9 +8,12 @@ from rotorpy.vehicles.hummingbird_params import quad_params
 from scipy.spatial.transform import Rotation as R
 
 # imports for Batched Dynamics
-import torch
-from torchdiffeq import odeint
-import roma
+try:
+    import torch
+    from torchdiffeq import odeint
+    import roma
+except ImportError:
+    pass
 
 import time
 

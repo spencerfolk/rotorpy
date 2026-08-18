@@ -2,8 +2,11 @@ import time
 from enum import Enum
 import copy
 import numpy as np
-import roma
-import torch
+try:
+    import roma
+    import torch
+except ImportError:
+    pass
 from numpy.linalg import norm
 from scipy.spatial.transform import Rotation
 from time import perf_counter

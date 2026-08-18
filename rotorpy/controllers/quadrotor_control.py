@@ -1,6 +1,9 @@
 import numpy as np
-import torch
-import roma
+try:
+    import torch
+    import roma
+except ImportError:
+    pass
 from scipy.spatial.transform import Rotation
 
 class SE3Control(object):

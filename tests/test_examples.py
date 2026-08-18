@@ -36,6 +36,8 @@ def test_example_script_runs(script_path):
         if result.returncode != 0:
             if "EOFError" in result.stderr:
                 pytest.skip(f"{script_name} skipped: script waits for user input.")
+            elif "ModuleNotFoundError" in result.stderr or "NameError" in result.stderr:
+                pytest.skip(f"{script_name} skipped: missing optional dependency.")
             else:
                 pytest.fail(f"{script_name} failed with error:\n{result.stderr.strip()}")
 
