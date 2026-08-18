@@ -98,7 +98,8 @@ def draw_camera_triad(ax, camera_pose, scale=1.0, alpha=1.0):
     return [artist for line in artists for artist in line]
 
 def plot_world_with_camera(ax, world, camera_pose=None, show_features=True, alpha=0.7,
-                           frustum_scale=None, intrinsics=None):
+                           frustum_scale=None, intrinsics=None, show_drone=False,
+                           drone_state=None, drone_scale_factor=1.0):
     """
     Plot a 3D scene of a world with its surface features and an optional camera
     frustum, modifying the axis in place.
@@ -116,6 +117,10 @@ def plot_world_with_camera(ax, world, camera_pose=None, show_features=True, alph
             auto-scale to the world size, default is None
         intrinsics, dict with keys fx, fy, cx, cy, width, height used to size
             the camera frustum, or None to skip the frustum, default is None
+        show_drone, if True render the drone in the 3D scene, default is False
+        drone_state, dict with keys 'x' (3,) and 'q' (4,) describing the
+            drone pose, required when show_drone is True, default is None
+        drone_scale_factor, scale factor for the wind arrow, default is 1.0
 
     Outputs:
         None (modifies the axis in place)
@@ -140,6 +145,14 @@ def plot_world_with_camera(ax, world, camera_pose=None, show_features=True, alph
         draw_camera_frustum(ax, camera_pose, intrinsics, scale=frustum_scale)
         draw_camera_triad(ax, camera_pose, scale=0.50*frustum_scale)
 
+    if show_drone and drone_state is not None:
+        from rotorpy.utils.shapes import Quadrotor
+        drone_quad = Quadrotor(ax, wind=False, shade=True)
+        R_drone = Rotation.from_quat(drone_state['q']).as_matrix()
+        drone_quad.transform(
+            position=np.array(drone_state['x'], dtype=float).copy(),
+            rotation=R_drone)
+
     (xmin, xmax, ymin, ymax, zmin, zmax) = world.world['bounds']['extents']
     ax.set_xlim((xmin, xmax))
     ax.set_ylim((ymin, ymax))
@@ -151,7 +164,8 @@ def plot_world_with_camera(ax, world, camera_pose=None, show_features=True, alph
     return
 
 def plot_camera_view(camera, world, state, ax3d=None, ax_img=None, save_path=None,
-                     frustum_scale=1.0, show_keypoints=False, render_kwargs=None):
+                     frustum_scale=1.0, show_keypoints=False, render_kwargs=None,
+                     show_drone=False):
     """
     Plot a figure with the 3D scene of a world (including a camera frustum) on
     the left and the rendered camera image on the right.
@@ -174,6 +188,7 @@ def plot_camera_view(camera, world, state, ax3d=None, ax_img=None, save_path=Non
             default is False
         render_kwargs, dict of additional keyword arguments forwarded to
             camera.render() (e.g. splat_radius), default is None
+        show_drone, if True render the drone in the 3D scene, default is False
 
     Outputs:
         (fig, (ax3d, ax_img)) tuple with the figure and the two axes
@@ -188,7 +203,8 @@ def plot_camera_view(camera, world, state, ax3d=None, ax_img=None, save_path=Non
 
     camera_pose = camera.compute_camera_pose(state)
     plot_world_with_camera(ax3d, world, camera_pose=camera_pose,
-                           intrinsics=camera.intrinsics, frustum_scale=frustum_scale)
+                           intrinsics=camera.intrinsics, frustum_scale=frustum_scale,
+                           show_drone=show_drone, drone_state=state)
     ax3d.set_aspect('equal')
 
     if render_kwargs is None:

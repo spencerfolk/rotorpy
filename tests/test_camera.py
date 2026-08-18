@@ -528,3 +528,118 @@ def test_camera_triad_world_directions():
     # The blue (z) arm points along the boresight: world +x for this camera.
     assert np.allclose(artists[2].get_data_3d()[0][1],
                        pose['x'][0] + 1.0, atol=1e-6)
+
+
+def test_nonidentity_drone_rotation():
+    """
+    Verify camera pose and world_to_camera correctness when the drone has a
+    non-identity rotation and the extrinsics are identity.
+
+    With identity extrinsics the camera frame equals the body frame, so the
+    world-to-camera rotation should equal the body-to-world rotation transposed
+    (i.e. world-to-body).
+    """
+    from rotorpy.sensors.camera import PinholeCamera
+    from scipy.spatial.transform import Rotation
+
+    cam = PinholeCamera()  # identity extrinsics, camera looks along +z
+
+    # 90 deg yaw about z: body +x -> world +y, body +y -> world -x.
+    q_yaw = Rotation.from_euler('z', 90, degrees=True).as_quat()
+    state = {'x': np.array([1.0, 2.0, 3.0]), 'q': q_yaw}
+
+    pose = cam.compute_camera_pose(state)
+
+    # Camera position: p_WC = x + R_WB @ p_BC = x (since p_BC = 0).
+    assert np.allclose(pose['x'], state['x']), "camera position should equal drone position"
+
+    # World-to-camera rotation: R_WC = R_BC @ R_WB^T = R_WB^T (identity extrinsics).
+    R_WC = Rotation.from_quat(pose['q']).as_matrix()
+    R_WB = Rotation.from_quat(q_yaw).as_matrix()
+    assert np.allclose(R_WC, R_WB.T), "R_WC should be R_WB^T for identity extrinsics"
+
+    # world_to_camera: a point at (2, 1, 3) in world frame.
+    # Relative to camera at (1, 2, 3): (1, -1, 0).
+    # R_WB for 90 deg yaw = [[0,-1,0],[1,0,0],[0,0,1]]
+    # R_WC = R_WB^T = [[0,1,0],[-1,0,0],[0,0,1]]
+    # R_WC @ (1,-1,0) = (-1, -1, 0)
+    p_W = np.array([[2.0, 1.0, 3.0]])
+    p_c = cam.world_to_camera(p_W, pose)
+    expected = R_WC @ (p_W[0] - pose['x'])
+    assert np.allclose(p_c[0], expected), "world_to_camera should match manual R_WC @ (p - p_WC)"
+
+    # Rendering: same geometry as test_render_nonidentity_attitude but verifying
+    # the full pipeline (pose + world_to_camera + project + render) is correct
+    # for a non-identity drone rotation. The math assertions above already
+    # verified the pose and world_to_camera; this just confirms the rendered
+    # image changes when the drone rotates.
+    from rotorpy.world import World
+    world_data = {
+        'bounds': {'extents': [-2, 2, -2, 2, -2, 2]},
+        'blocks': [{'extents': [0.0, 1.0, 0.0, 1.0, 0.0, 1.0], 'color': [1.0, 0.0, 0.0]}],
+    }
+    # Use descriptor noise so features have distinct colors, ensuring
+    # different views of the same cube face produce different images.
+    world = World(world_data, add_features=True, feature_mode='regular',
+                  feature_spacing=0.25, descriptor_noise=0.2)
+
+    # Identity extrinsics camera (looks along +z). From below, looking up at
+    # the block's bottom face.
+    state_id = {'x': np.array([0.5, 0.5, -1.0]), 'q': np.array([0.0, 0.0, 0.0, 1.0])}
+    out_id = cam.render(world, state_id)
+    assert out_id['visible_mask'].any(), "identity drone should see features"
+
+    # 90 deg pitch about x: body +z -> world -y. Camera now looks along -y.
+    # Place camera at y=2 looking down to see the y=1 face of the block.
+    q_pitch = Rotation.from_euler('x', 90, degrees=True).as_quat()
+    state_pitch = {'x': np.array([0.5, 2.0, 0.5]), 'q': q_pitch}
+    out_pitch = cam.render(world, state_pitch)
+    assert out_pitch['visible_mask'].any(), "pitched drone should see features"
+
+    assert not np.allclose(out_id['image'], out_pitch['image']), \
+        "different drone attitudes should produce different images"
+
+
+def test_measurement_interface():
+    """
+    Verify that measurement() returns the same output as render().
+    """
+    from rotorpy.sensors.camera import PinholeCamera
+    from rotorpy.world import World
+
+    cam = PinholeCamera()
+    world = World.empty((-2, 4, -2, 4, -1, 5), add_features=True,
+                        feature_mode='regular', feature_spacing=0.5, descriptor_noise=0.0)
+    state = {'x': np.array([1.0, 2.0, 0.0]), 'q': np.array([0.0, 0.0, 0.0, 1.0])}
+
+    out_render = cam.render(world, state)
+    out_meas = cam.measurement(state, world)
+
+    assert out_render.keys() == out_meas.keys(), "measurement() and render() should return the same keys"
+    assert np.allclose(out_render['image'], out_meas['image']), "image mismatch"
+    assert np.array_equal(out_render['visible_mask'], out_meas['visible_mask']), "visible_mask mismatch"
+    assert np.allclose(out_render['depth'], out_meas['depth']), "depth mismatch"
+
+
+def test_batched_measurement_interface():
+    """
+    Verify that BatchedPinholeCamera.measurement() returns the same output as render().
+    """
+    torch = pytest.importorskip("torch")
+    from rotorpy.sensors.camera import BatchedPinholeCamera
+    from rotorpy.world import World
+
+    world = World.empty((-2, 4, -2, 4, -1, 5), add_features=True,
+                        feature_mode='regular', feature_spacing=0.5, descriptor_noise=0.0)
+    bcam = BatchedPinholeCamera(num_drones=2)
+
+    states = {'x': torch.tensor([[1.0, 2.0, 0.0], [0.0, 0.0, 1.0]]),
+              'q': torch.tensor([[0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 0.0, 1.0]])}
+
+    out_render = bcam.render(world, states)
+    out_meas = bcam.measurement(world, states)
+
+    assert out_render.keys() == out_meas.keys(), "measurement() and render() should return the same keys"
+    assert torch.allclose(out_render['image'], out_meas['image']), "image mismatch"
+    assert torch.equal(out_render['visible_mask'], out_meas['visible_mask']), "visible_mask mismatch"
+    assert torch.allclose(out_render['depth'], out_meas['depth']), "depth mismatch"

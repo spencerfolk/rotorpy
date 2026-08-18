@@ -17,8 +17,8 @@ class PinholeCamera:
 
     Camera frame convention: the camera looks along +z, with x to the right
     and y down (OpenCV-style). World-to-camera transform is given by
-        p_c = R_WC @ (p_W - p_WC),   R_WC = R_BC @ R_WB,
-    where R_WB is the vehicle's world-to-body rotation (from the state
+        p_c = R_WC @ (p_W - p_WC),   R_WC = R_BC @ R_WB^T,
+    where R_WB is the vehicle's body-to-world rotation (from the state
     quaternion) and R_BC is the body-to-camera rotation from the extrinsics.
 
     Projection model (OpenCV, with distortion coefficients [k1, k2, p1, p2, k3]):
@@ -100,15 +100,44 @@ class PinholeCamera:
         if q_WB.shape != (4,):
             raise ValueError("state['q'] must have shape (4,), got {}".format(q_WB.shape))
 
-        R_WB = Rotation.from_quat(q_WB).as_matrix()  # world -> body
+        R_WB = Rotation.from_quat(q_WB).as_matrix()  # body -> world
 
         # Camera world position: p_WC = state['x'] + R_WB @ p_BC.
         p_WC = x_WB + R_WB @ self.p_BC
 
-        # World-to-camera quaternion: q_WC = q_BC * q_WB (Hamilton product).
-        q_WC = (Rotation.from_quat(np.asarray(self.extrinsics['orientation'], dtype=np.float64)) * Rotation.from_quat(q_WB)).as_quat()
+        # World-to-camera quaternion: q_WC = q_BC * q_WB^{-1}.
+        # R_WC = R_BC @ R_WB^T  (body-to-camera composed with world-to-body).
+        q_WC = (Rotation.from_quat(np.asarray(self.extrinsics['orientation'], dtype=np.float64)) * Rotation.from_quat(q_WB).inv()).as_quat()
 
         return {'x': p_WC, 'q': q_WC}
+
+    def measurement(self, state, world, **render_kwargs):
+        """
+        Compute a camera measurement given the vehicle state and world.
+
+        This is the primary sensor interface, consistent with the measurement()
+        pattern used by other RotorPy sensors (IMU, mocap, range sensors).
+
+        Inputs:
+            state, a dict describing the vehicle state with keys
+                x, position, m, shape=(3,)
+                q, orientation quaternion [i, j, k, w], shape=(4,)
+            world, World object exposing get_surface_features(),
+                get_feature_descriptors(), and get_block_bounding_boxes()
+            **render_kwargs, additional keyword arguments forwarded to render()
+                (e.g. background_color, splat_radius, with_distortion)
+
+        Outputs:
+            measurement, a dict with keys
+                image, (H, W, 3) float32 image in [0, 1]
+                keypoints, (M, 2) pixels of visible in-frustum features
+                keypoint_depths, (M,) camera-frame z of visible features
+                visible_features, (M, 3) world positions of visible features
+                visible_mask, (N,) bool over all world features
+                projected, (N, 2) pixels of all features (may be out of bounds)
+                depth, (N,) camera-frame z of all features
+        """
+        return self.render(world, state, **render_kwargs)
 
     def world_to_camera(self, points_world, camera_pose):
         """
@@ -407,6 +436,33 @@ class BatchedPinholeCamera:
         R[:, 2, 2] = 1 - 2*(x**2 + y**2)
         return R
 
+    def measurement(self, world, states, **render_kwargs):
+        """
+        Compute camera measurements for a batch of drones.
+
+        This is the primary sensor interface, consistent with the measurement()
+        pattern used by other RotorPy sensors (IMU, mocap, range sensors).
+
+        Inputs:
+            world, World object exposing get_surface_features(),
+                get_feature_descriptors(), and get_block_bounding_boxes()
+            states, a dict describing the vehicle states with keys
+                x, position, (B, 3) tensor
+                q, orientation quaternion [i, j, k, w], (B, 4) tensor
+            **render_kwargs, additional keyword arguments forwarded to render()
+                (e.g. background_color, splat_radius, with_distortion)
+
+        Outputs:
+            measurement, a dict with keys
+                image, (B, H, W, 3) float tensor in [0, 1]
+                visible_mask, (B, N) bool tensor over all world features
+                depth, (B, N) camera-frame z tensor of all features
+                keypoints, list of length B of (M_b, 2) pixel tensors
+                keypoint_depths, list of length B of (M_b,) depth tensors
+                visible_features, list of length B of (M_b, 3) world-position tensors
+        """
+        return self.render(world, states, **render_kwargs)
+
     def render(self, world, states, background_color=None, splat_radius=1, with_distortion=True):
         """
         Render synthetic images for a batch of drones.
@@ -476,9 +532,9 @@ class BatchedPinholeCamera:
                 'visible_features': [empty_f for _ in range(B)],
             }
 
-        # World-to-camera rotation per drone: R_WC = R_BC @ R_WB.
-        R_WB = self._quat_to_rotmat(q)  # (B, 3, 3)
-        R_WC = torch.einsum('ij,bjk->bik', self.R_BC, R_WB)  # (B, 3, 3)
+        # World-to-camera rotation per drone: R_WC = R_BC @ R_WB^T.
+        R_WB = self._quat_to_rotmat(q)  # (B, 3, 3), body -> world
+        R_WC = torch.einsum('ij,bjk->bik', self.R_BC, R_WB.transpose(-1, -2))  # (B, 3, 3)
 
         # Camera world position per drone: p_WC = x + R_WB @ p_BC.
         p_WC = x + torch.einsum('bij,j->bi', R_WB, self.p_BC)  # (B, 3)
