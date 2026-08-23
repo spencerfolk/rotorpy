@@ -95,3 +95,13 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["rotorpy", "rotorpy.*"]
 [tool.setuptools]
+
+[tool.pytest.ini_options]
+addopts = '-m "not full_run"'
+markers = [
+    "full_run: full end-to-end execution of just the examples in ./examples/",
+]
+filterwarnings = [
+    "ignore:Matplotlib is currently using agg.*:UserWarning",
+    "ignore:Animation was deleted without rendering anything.*:UserWarning",
+]
