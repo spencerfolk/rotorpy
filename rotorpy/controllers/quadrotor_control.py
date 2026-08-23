@@ -58,8 +58,8 @@ class SE3Control(object):
         # Gains  
         self.kp_pos = np.array([6.5,6.5,15])
         self.kd_pos = np.array([4.0, 4.0, 9])
-        self.kp_att = 544
-        self.kd_att = 46.64
+        self.kp_att = quad_params.get("kp_att", 310)
+        self.kd_att = quad_params.get("kd_att", 57.0)
         self.kp_vel = 0.1*self.kp_pos   # P gain for velocity controller (only used when the control abstraction is cmd_vel)
 
         # Linear map from individual rotor forces to scalar thrust and vector
@@ -207,13 +207,13 @@ class BatchedSE3Control(object):
         else:
             self.kd_pos = kd_pos.to(self.device).double()
         if kp_att is None:
-            self.kp_att = torch.tensor([544], device=device).repeat(num_drones, 1).double()
+            self.kp_att = batch_params.kp_att.to(self.device).double()
         else:
             self.kp_att = kp_att.to(self.device).double()
             if len(self.kp_att.shape) < 2:
                 self.kp_att = self.kp_att.unsqueeze(-1)
         if kd_att is None:
-            self.kd_att = torch.tensor([46.64], device=device).repeat(num_drones, 1).double()
+            self.kd_att = batch_params.kd_att.to(self.device).double()
         else:
             self.kd_att = kd_att.to(self.device).double()
             if len(self.kd_att.shape) < 2:
