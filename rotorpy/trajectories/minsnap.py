@@ -5,7 +5,10 @@ import numpy as np
 import cvxopt
 from scipy.linalg import block_diag
 from typing import List
-import torch
+try:
+    import torch
+except ImportError:
+    pass
 
 def cvxopt_solve_qp(P, q, G=None, h=None, A=None, b=None):
     """

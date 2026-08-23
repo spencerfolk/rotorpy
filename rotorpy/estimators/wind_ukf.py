@@ -2,8 +2,11 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 import copy
 
-from filterpy.kalman import UnscentedKalmanFilter
-from filterpy.kalman import MerweScaledSigmaPoints
+try:
+    from filterpy.kalman import UnscentedKalmanFilter
+    from filterpy.kalman import MerweScaledSigmaPoints
+except ImportError:
+    pass
 
 """
 The Wind UKF uses the same model as the EKF found in wind_ekf.py, but instead applies the Unscented Kalman Filter. The benefit
