@@ -207,13 +207,13 @@ class BatchedSE3Control(object):
         else:
             self.kd_pos = kd_pos.to(self.device).double()
         if kp_att is None:
-            self.kp_att = torch.tensor([544], device=device).repeat(num_drones, 1).double()
+            self.kp_att = batch_params.kp_att.to(self.device).double()
         else:
             self.kp_att = kp_att.to(self.device).double()
             if len(self.kp_att.shape) < 2:
                 self.kp_att = self.kp_att.unsqueeze(-1)
         if kd_att is None:
-            self.kd_att = torch.tensor([46.64], device=device).repeat(num_drones, 1).double()
+            self.kd_att = batch_params.kd_att.to(self.device).double()
         else:
             self.kd_att = kd_att.to(self.device).double()
             if len(self.kd_att.shape) < 2:
