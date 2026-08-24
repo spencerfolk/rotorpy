@@ -36,7 +36,7 @@ def main():
     world = World(world_data, add_features=True, feature_mode='regular',
                   feature_spacing=0.05, descriptor_noise=0.1)
     # world = World(world_data, add_features=True, feature_mode='random',
-    #                N_features_per_surface=100,, descriptor_noise=0.1)
+    #                N_features_per_surface=100, descriptor_noise=0.1)
 
     # Camera intrinsics: focal lengths, image size, principal point, and
     # distortion coefficients [k1, k2, p1, p2, k3] (zeros => pinhole only).
