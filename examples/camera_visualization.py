@@ -1,14 +1,7 @@
 """
 Camera visualization example for RotorPy.
 
-A simple, self-contained demonstration of the pinhole camera sensor:
-  * a custom world with just two cuboids,
-  * a camera placed so the near cuboid partially occludes the far cuboid,
-  * a side-by-side figure showing the 3D scene and the rendered camera view.
-
-The camera uses a forward-facing extrinsics (camera looks along the body +x
-axis), so it sees the world along +x when the vehicle is yaw-aligned with the
-world frame.
+A simple, self-contained demonstration of the pinhole camera sensor on a custom world with just two cuboids with different colors and sizes.
 """
 import os
 import sys
@@ -36,11 +29,14 @@ def main():
             {'extents': [3.6, 5.6, 0.7, 2.5, 0.3, 2.1], 'color': [0.1, 0.3, 0.9]},
         ],
     }
-    # add_features=True places a grid of visual features (3D position + color)
-    # on every cuboid face. feature_spacing controls the grid density; a small
-    # spacing gives dense, near-solid faces in the rendered image.
+    # add_features=True places visual features (3D position + color) on the surfaces of the world geometry.
+    #   feature_mode='regular' places features in a regular grid pattern with fixed feature spacing. 
+    #   feature_mode='random' places N_features_per_surface random features on each surface. 
+    #   The descriptor_noise param adds Gaussian noise to the feature descriptors (colors) to simulate real-world sensor noise or unique feature descriptors.
     world = World(world_data, add_features=True, feature_mode='regular',
                   feature_spacing=0.05, descriptor_noise=0.1)
+    # world = World(world_data, add_features=True, feature_mode='random',
+    #                N_features_per_surface=100,, descriptor_noise=0.1)
 
     # Camera intrinsics: focal lengths, image size, principal point, and
     # distortion coefficients [k1, k2, p1, p2, k3] (zeros => pinhole only).
@@ -49,16 +45,15 @@ def main():
                   'dist_coeffs': [-0.3, 0.1, 0.0, 0.0, 0.0]}
     # Camera extrinsics: position and orientation of the camera relative to the
     # vehicle body. The orientation is a quaternion [i, j, k, w] describing the
-    # rotation from the body frame to the camera frame. Ry(-90 deg) makes the
-    # camera look along the body +x axis.
-    extrinsics = {'position': np.array([0.5, 0.0, 1.2]),
+    # rotation from the body frame to the camera frame.
+    extrinsics = {'position': np.array([0.0, 0.0, 0.0]),
                   'orientation': (Rotation.from_euler('x', 25, degrees=True)*Rotation.from_euler('y', -90, degrees=True)*Rotation.from_euler('x', 90, degrees=True)).as_quat()}
     camera = PinholeCamera(intrinsics=intrinsics, extrinsics=extrinsics)
 
     # Park the vehicle (identity orientation) to the -x side of both cuboids,
     # centered on their common midline, and look along +x. The camera therefore
     # sees the red cuboid in front and the blue cuboid peeking out around it.
-    state = {'x': np.array([0.5, 1.6, 1.2]),
+    state = {'x': np.array([1.0, 1.6, 2.4]),
              'q': np.array([0.0, 0.0, 0.0, 1.0])}
 
     # Render the world from the camera. The render output includes the image,
@@ -75,7 +70,7 @@ def main():
     save_path = os.path.join(media_dir, 'camera_visualization.png')
     # splat_radius controls the pixel size of each feature splat; a larger
     # radius makes the features read as near-solid colored regions.
-    fig, _ = plot_camera_view(camera, world, state, save_path=save_path,
+    fig, _ = plot_camera_view(camera, world, state, show_drone=True, save_path=save_path,
                               render_kwargs={'splat_radius': 4})
     import matplotlib.pyplot as plt
     plt.show()

@@ -132,8 +132,9 @@ dmypy.json
 sandbox.py
 waypoint_traj.py
 
-# Ignore csv files. 
+# Ignore csv files and npz files generated from demos or training data generation.
 *.csv
+*.npz
 
 # Ignore benchmark figures. 
 /tests/*.png 
@@ -143,6 +144,7 @@ waypoint_traj.py
 # Ignore example figures.
 /examples/*.png
 /examples/*.gif
+rotorpy_demo_frames/
 
 # DS_Store
 *.DS_Store
