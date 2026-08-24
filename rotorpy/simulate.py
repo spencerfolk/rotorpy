@@ -27,7 +27,7 @@ class ExitStatus(Enum):
     FLY_AWAY     = 'Failure: Your quadrotor is out of control; it flew away with a position error greater than 20 meters.'
     COLLISION    = 'Failure: Your quadrotor collided with an object.'
 
-def simulate(world, initial_state, vehicle, controller, trajectory, wind_profile, imu, mocap, estimator, t_final, t_step, safety_margin, use_mocap, terminate=None, print_fps=False):
+def simulate(world, initial_state, vehicle, controller, trajectory, wind_profile, imu, mocap, estimator, t_final, t_step, safety_margin, use_mocap, terminate=None, print_fps=False, camera=None):
     """
     Perform a vehicle simulation and return the numerical results.
 
@@ -50,6 +50,10 @@ def simulate(world, initial_state, vehicle, controller, trajectory, wind_profile
         mocap, a MotionCapture object that provides noisy measurements of pose and twist with artifacts. 
         use_mocap, a boolean to determine in noisy measurements from mocap should be used for quadrotor control
         estimator, an estimator object that provides estimates of a portion or all of the vehicle state.
+        camera, an optional PinholeCamera object that renders images of the world from the
+            vehicle state. Frames are captured at the camera's frame_rate (every
+            simulation step if frame_rate is None). If None (default), no camera
+            data is collected.
 
     Outputs:
         time, seconds, shape=(N,)
@@ -84,6 +88,18 @@ def simulate(world, initial_state, vehicle, controller, trajectory, wind_profile
             q, orientation of body w.r.t. inertial frame.
             w, body rates in the body frame. 
         exit_status, an ExitStatus enum indicating the reason for termination.
+        camera_measurements, None if no camera was supplied, otherwise a dict of stacked
+            camera measurements with K frames captured at times camera_measurements['time'].
+            The fixed-size outputs of measurement() are stacked over frames while the
+            variable-size ones are stored as per-frame lists:
+                time, frame timestamps, s, shape=(K,), a subset of `time`
+                image, rendered frames as uint8 (float [0,1] scaled by 255), shape=(K,H,W,3)
+                visible_mask, bool over all world features, shape=(K,N)
+                projected, pixels of all features, shape=(K,N,2)
+                depth, camera-frame z of all features, shape=(K,N)
+                keypoints, list of K (M_k,2) arrays of visible feature pixels
+                keypoint_depths, list of K (M_k,) arrays of visible feature depths
+                visible_features, list of K (M_k,3) arrays of visible feature positions
     """
 
     # Coerce entries of initial state into numpy arrays, if they are not already.
@@ -115,6 +131,26 @@ def simulate(world, initial_state, vehicle, controller, trajectory, wind_profile
     imu_gt.append(imu.measurement(state[-1], state_dot, with_noise=False))
     state_estimate.append(estimator.step(state[0], control[0], imu_measurements[0], mocap_measurements[0]))
 
+    # Optional camera: frames are captured at the camera's frame_rate (every
+    # simulation step if frame_rate is None). Images are stored as uint8 to
+    # keep the result dict a manageable size; see merge_camera_measurements().
+    camera_measurements = None
+    if camera is not None:
+        frame_rate = getattr(camera, 'frame_rate', None)
+        camera_period = 1.0 / frame_rate if frame_rate else t_step
+        next_camera_time = -np.inf  # Always capture the first frame.
+        camera_frames = []
+        camera_times = []
+
+    def capture_camera(t, s):
+        nonlocal next_camera_time
+        camera_frames.append(camera.measurement(s, world))
+        camera_times.append(t)
+        next_camera_time = t + camera_period
+
+    if camera is not None:
+        capture_camera(time[-1], state[-1])
+
     exit_status = None
 
     while True:
@@ -137,6 +173,8 @@ def simulate(world, initial_state, vehicle, controller, trajectory, wind_profile
         state_dot = vehicle.statedot(state[-1], control[-1], t_step)
         imu_measurements.append(imu.measurement(state[-1], state_dot, with_noise=True))
         imu_gt.append(imu.measurement(state[-1], state_dot, with_noise=False))
+        if camera is not None and time[-1] >= next_camera_time - 1e-9:
+            capture_camera(time[-1], state[-1])
 
         wall_dt = max(perf_counter() - step_start_time, 1e-6)
         fps = 1/wall_dt
@@ -151,8 +189,47 @@ def simulate(world, initial_state, vehicle, controller, trajectory, wind_profile
     control         = merge_dicts(control)
     flat            = merge_dicts(flat)
     state_estimate  = merge_dicts(state_estimate)
+    if camera is not None:
+        camera_measurements = merge_camera_measurements(camera_frames, camera_times)
 
-    return (time, state, control, flat, imu_measurements, imu_gt, mocap_measurements, state_estimate, exit_status)
+    return (time, state, control, flat, imu_measurements, imu_gt, mocap_measurements, state_estimate, exit_status, camera_measurements)
+
+def merge_camera_measurements(frames, times):
+    """
+    Combine a list of camera measurement dicts (as returned by
+    PinholeCamera.measurement()) into a single dict.
+
+    Fixed-size outputs (image, visible_mask, projected, depth) are stacked over
+    frames. The image is converted from float32 in [0, 1] to uint8 to keep the
+    memory footprint manageable; divide by 255.0 to recover floats. Variable
+    size outputs (keypoints, keypoint_depths, visible_features) are kept as
+    lists of per-frame arrays since their lengths vary between frames.
+
+    Inputs:
+        frames, list of K measurement dicts from PinholeCamera.measurement()
+        times, list of K frame timestamps, s
+
+    Outputs:
+        camera_measurements, a dict with keys
+            time, (K,) array of frame timestamps
+            image, (K, H, W, 3) uint8 array of frames
+            visible_mask, (K, N) bool array over all world features
+            projected, (K, N, 2) array of pixels of all features
+            depth, (K, N) array of camera-frame z of all features
+            keypoints, list of K (M_k, 2) arrays
+            keypoint_depths, list of K (M_k,) arrays
+            visible_features, list of K (M_k, 3) arrays
+    """
+    return {
+        'time': np.array(times, dtype=float),
+        'image': np.stack([np.round(np.clip(f['image'], 0.0, 1.0)*255.0).astype(np.uint8) for f in frames]),
+        'visible_mask': np.stack([f['visible_mask'] for f in frames]),
+        'projected': np.stack([f['projected'] for f in frames]),
+        'depth': np.stack([f['depth'] for f in frames]),
+        'keypoints': [f['keypoints'] for f in frames],
+        'keypoint_depths': [f['keypoint_depths'] for f in frames],
+        'visible_features': [f['visible_features'] for f in frames],
+    }
 
 def merge_dicts(dicts_in):
     """

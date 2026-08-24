@@ -27,6 +27,7 @@ class Environment():
                        mocap = None,            # mocap sensor object, if none is supplied it will choose a default mocap.
                        world        = None,     # The world object
                        estimator    = None,     # estimator object
+                       camera       = None,     # optional PinholeCamera sensor object; if None no camera data is collected.
                        sim_rate     = 100,      # The update frequency of the simulator in Hz
                        safety_margin = 0.25,    # The radius of the safety region around the robot. 
                        ):
@@ -86,6 +87,11 @@ class Environment():
         else:
             self.estimator = estimator
 
+        # The camera is optional and is not defaulted: rendering is comparatively
+        # expensive, and there is nothing useful to render if the user did not
+        # ask for it. Frames are captured during run() at camera.frame_rate.
+        self.camera = camera
+
         return 
 
     def run(self,   t_final      = 10,       # The maximum duration of the environment in seconds
@@ -95,6 +101,7 @@ class Environment():
                     plot_mocap      = True,     # Boolean: plots the motion capture pose and twist measurements
                     plot_estimator  = True,     # Boolean: plots the estimator filter states and covariance diagonal elements
                     plot_imu        = True,     # Boolean: plots the IMU measurements
+                    plot_camera     = True,     # Boolean: plots the camera frames and visibility statistics (if a camera was specified).
                     animate_bool    = False,    # Boolean: determines if the animation of vehicle state will play. 
                     animate_wind    = False,    # Boolean: determines if the animation will include a wind vector.
                     verbose         = False,    # Boolean: will print statistics regarding the simulation. 
@@ -112,30 +119,37 @@ class Environment():
         self.use_mocap = use_mocap
 
         start_time = clk.time()
-        (time, state, control, flat, imu_measurements, imu_gt, mocap_measurements, state_estimate, exit) = simulate(self.world,
-                                                                                                                    self.vehicle.initial_state,
-                                                                                                                    self.vehicle,
-                                                                                                                    self.controller,
-                                                                                                                    self.trajectory,
-                                                                                                                    self.wind_profile,
-                                                                                                                    self.imu,
-                                                                                                                    self.mocap,
-                                                                                                                    self.estimator,
-                                                                                                                    self.t_final,
-                                                                                                                    self.t_step,
-                                                                                                                    self.safety_margin,
-                                                                                                                    self.use_mocap,
-                                                                                                                    terminate=self.terminate,
-                                                                                                                    )
+        (time, state, control, flat, imu_measurements, imu_gt, mocap_measurements, state_estimate, exit, camera_measurements) = simulate(self.world,
+                                                                                                                            self.vehicle.initial_state,
+                                                                                                                            self.vehicle,
+                                                                                                                            self.controller,
+                                                                                                                            self.trajectory,
+                                                                                                                            self.wind_profile,
+                                                                                                                            self.imu,
+                                                                                                                            self.mocap,
+                                                                                                                            self.estimator,
+                                                                                                                            self.t_final,
+                                                                                                                            self.t_step,
+                                                                                                                            self.safety_margin,
+                                                                                                                            self.use_mocap,
+                                                                                                                            terminate=self.terminate,
+                                                                                                                            camera=self.camera,
+                                                                                                                            )
         if verbose:
             # Print relevant statistics or simulator status indicators here
             print('-------------------RESULTS-----------------------')
             print('SIM TIME -- %3.2f seconds | WALL TIME -- %3.2f seconds' % (min(self.t_final, time[-1]) , (clk.time()-start_time)))
             print('EXIT STATUS -- '+exit.value)
+            if camera_measurements is not None:
+                print('CAMERA -- captured %d frames at %s Hz' % (len(camera_measurements['time']),
+                                                                 getattr(self.camera, 'frame_rate', None) or ('every step (%g Hz)' % self.sim_rate)))
 
-        self.result = dict(time=time, state=state, control=control, flat=flat, imu_measurements=imu_measurements, imu_gt=imu_gt, mocap_measurements=mocap_measurements, state_estimate=state_estimate, exit=exit)
+        # Camera measurements are kept in their own entry so that they are not
+        # included in save_to_csv()/unpack_sim_data(); images are far too large
+        # for a csv. Use save_camera_data() to save them instead.
+        self.result = dict(time=time, state=state, control=control, flat=flat, imu_measurements=imu_measurements, imu_gt=imu_gt, mocap_measurements=mocap_measurements, state_estimate=state_estimate, exit=exit, camera_measurements=camera_measurements)
 
-        visualizer = Plotter(self.result, self.world)
+        visualizer = Plotter(self.result, self.world, self.camera)
 
         # Remove gif or mp4 in filename if it exists (the respective functions will add appropriate extensions)
         if fname is not None:
@@ -149,7 +163,7 @@ class Environment():
             visualizer.animate_results(fname=fname, animate_wind=animate_wind)
         if plot:
             # Do plotting here
-            visualizer.plot_results(fname=fname,plot_mocap=plot_mocap,plot_estimator=plot_estimator,plot_imu=plot_imu)
+            visualizer.plot_results(fname=fname,plot_mocap=plot_mocap,plot_estimator=plot_estimator,plot_imu=plot_imu,plot_camera=plot_camera)
             if not animate_bool:
                 plt.show()
 
@@ -158,6 +172,9 @@ class Environment():
     def save_to_csv(self, savepath=None):
         """
         Save the simulation data in self.results to a file. 
+
+        Note that camera measurements (images etc.) are NOT included in the csv;
+        use save_camera_data() to save those.
         """
 
         if savepath is None:
@@ -171,6 +188,46 @@ class Environment():
                 savepath = savepath + ".csv"
             dataframe = unpack_sim_data(self.result)
             dataframe.to_csv(savepath)
+
+    def save_camera_data(self, savepath=None, save_pngs=False):
+        """
+        Save the camera measurements in self.result to a .npz archive, and
+        optionally the frames as png images.
+
+        Inputs:
+            savepath, path prefix for the saved files. ".npz" is appended if
+                missing. Defaults to "rotorpy_camera_results.npz".
+            save_pngs, if True, also writes each frame as
+                <savepath>_frames/frame_XXXXX.png.
+        """
+
+        if self.result is None or self.result.get('camera_measurements') is None:
+            print("Error: cannot save camera data since no camera measurements have been generated! Aborting save.")
+            return
+
+        if savepath is None:
+            savepath = "rotorpy_camera_results.npz"
+        if not savepath.endswith(".npz"):
+            savepath = savepath + ".npz"
+
+        cm = self.result['camera_measurements']
+        np.savez_compressed(savepath,
+                            time=cm['time'],
+                            image=cm['image'],
+                            visible_mask=cm['visible_mask'],
+                            projected=cm['projected'],
+                            depth=cm['depth'],
+                            keypoints=np.array(cm['keypoints'], dtype=object),
+                            keypoint_depths=np.array(cm['keypoint_depths'], dtype=object),
+                            visible_features=np.array(cm['visible_features'], dtype=object))
+
+        if save_pngs:
+            frames_dir = savepath[:-len('.npz')] + '_frames'
+            os.makedirs(frames_dir, exist_ok=True)
+            for i, image in enumerate(cm['image']):
+                plt.imsave(os.path.join(frames_dir, 'frame_%05d.png' % i), image)
+
+        return
 
 
 if __name__=="__main__":
