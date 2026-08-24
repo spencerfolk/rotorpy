@@ -305,6 +305,15 @@ class PinholeCamera:
             splat_radius = self.splat_radius
         if background_color is None:
             background_color = [0.9, 0.9, 0.9]
+        # A scalar fill is dramatically faster than broadcasting an RGB list
+        # into the array (np.full dispatches the latter through a slow
+        # strided-copy path), so take that route whenever channels match.
+        bg = np.asarray(background_color, dtype=np.float32).ravel()
+        if bg.size == 3 and np.all(bg == bg[0]):
+            image = np.full((self.height, self.width, 3), float(bg[0]), dtype=np.float32)
+        else:
+            image = np.empty((self.height, self.width, 3), dtype=np.float32)
+            image[:] = background_color
 
         features = None
         getter = getattr(world, 'get_surface_features', None)
@@ -320,8 +329,6 @@ class PinholeCamera:
 
         features = np.asarray(features, dtype=np.float64).reshape(-1, 3)
         N = features.shape[0]
-
-        image = np.full((self.height, self.width, 3), background_color, dtype=np.float32)
 
         camera_pose = self.compute_camera_pose(state)
 
@@ -353,24 +360,30 @@ class PinholeCamera:
             if colors.shape[0] != N:
                 colors = np.full((N, 3), 0.6, dtype=np.float64)
 
-        if np.any(visible_mask):
-            visible_idx = np.nonzero(visible_mask)[0]
-            rows = np.clip(np.round(v[visible_idx]).astype(int), 0, self.height - 1)
-            cols = np.clip(np.round(u[visible_idx]).astype(int), 0, self.width - 1)
-            offsets = np.arange(-splat_radius, splat_radius + 1)
-            for i, (r, c) in enumerate(zip(rows, cols)):
-                rr = r + offsets
-                cc = c + offsets
-                rr = rr[(rr >= 0) & (rr < self.height)]
-                cc = cc[(cc >= 0) & (cc < self.width)]
-                image[np.ix_(rr, cc)] = colors[visible_idx[i]].astype(np.float32)
+        visible_idx = np.nonzero(visible_mask)[0]
+        if visible_idx.size > 0:
+            # Splat every visible feature onto the image in one vectorized
+            # write. Pixels are flattened to (K, Pr, Pc) indices in feature
+            # order so that later features overwrite earlier ones where
+            # splats overlap -- same semantics as the per-feature loop.
+            centers_r = np.clip(np.round(v[visible_idx]).astype(np.intp), 0, self.height - 1)
+            centers_c = np.clip(np.round(u[visible_idx]).astype(np.intp), 0, self.width - 1)
+            offsets = np.arange(-int(splat_radius), int(splat_radius) + 1)
+            rr = centers_r[:, None] + offsets[None, :]              # (K, Pr)
+            cc = centers_c[:, None] + offsets[None, :]              # (K, Pc)
+            inside = ((rr >= 0) & (rr < self.height))[:, :, None] & \
+                     ((cc >= 0) & (cc < self.width))[:, None, :]
+            flat = (np.clip(rr, 0, self.height - 1)[:, :, None] * self.width +
+                    np.clip(cc, 0, self.width - 1)[:, None, :])[inside]
+            values = np.broadcast_to(colors[visible_idx].astype(np.float32)[:, None, None, :],
+                                     inside.shape + (3,))[inside]
+            image.reshape(-1, 3)[flat] = values
 
-        keypoint_idx = np.nonzero(visible_mask)[0]
         return {
             'image': image,
-            'keypoints': projected[keypoint_idx],
-            'keypoint_depths': depth[keypoint_idx],
-            'visible_features': features[keypoint_idx],
+            'keypoints': projected[visible_idx],
+            'keypoint_depths': depth[visible_idx],
+            'visible_features': features[visible_idx],
             'visible_mask': visible_mask,
             'projected': projected,
             'depth': depth,
@@ -628,9 +641,9 @@ class BatchedPinholeCamera:
             full_idx = b_idx[:, None, None] * (self.height * self.width) + rows * self.width + cols  # (K, Pr, Pc)
             full_idx = full_idx[inside]
             values = color_src[:, None, None, :].expand(-1, rows.shape[1], cols.shape[2], -1)[inside]
-            image_flat = image.reshape(B * self.height * self.width, 3).clone()
-            image_flat.index_put_((full_idx,), values)
-            image = image_flat.reshape(B, self.height, self.width, 3)
+            # image is freshly allocated and contiguous, so reshape returns a
+            # view and index_put_ writes through to it directly.
+            image.reshape(B * self.height * self.width, 3).index_put_((full_idx,), values)
 
         # Rebuild per-drone outputs from the visible mask.
         keypoints = []
