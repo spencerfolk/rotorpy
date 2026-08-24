@@ -320,6 +320,50 @@ def test_batched_camera_matches_numpy():
         assert torch.allclose(bout['visible_features'][b], torch.from_numpy(out['visible_features']).float(), atol=1e-4), f"visible_features mismatch drone {b}"
 
 
+def test_batched_measurement_matches_single_measurement():
+    """
+    Verify that BatchedPinholeCamera.measurement() matches PinholeCamera.measurement()
+    for the same per-drone states, including non-identity attitudes.
+    """
+    print("\nTesting batched measurement vs single-camera measurement")
+    torch = pytest.importorskip("torch")
+    from scipy.spatial.transform import Rotation
+    from rotorpy.world import World
+    from rotorpy.sensors.camera import PinholeCamera, BatchedPinholeCamera
+
+    world_data = {
+        'bounds': {'extents': [-2, 2, -2, 2, -2, 2]},
+        'blocks': [{'extents': [0.0, 1.0, 0.0, 1.0, 0.0, 1.0], 'color': [1.0, 0.0, 0.0]}],
+    }
+    world = World(world_data, add_features=True, feature_mode='regular', feature_spacing=0.25,
+                  descriptor_noise=0.1, seed=2)
+
+    extrinsics = {'position': np.zeros(3), 'orientation': np.array([0.0, 0.0, 0.0, 1.0])}
+    cam = PinholeCamera(extrinsics=extrinsics)
+    bcam = BatchedPinholeCamera(num_drones=3, extrinsics=extrinsics)
+
+    # Identity attitude below the block, a yawed attitude (boresight still +z),
+    # and a pitched attitude looking along -y at the block's y=1 face.
+    q_yaw = Rotation.from_euler('z', 90, degrees=True).as_quat()
+    q_pitch = Rotation.from_euler('x', 90, degrees=True).as_quat()
+    states = [{'x': np.array([0.5, 0.5, -1.0]), 'q': np.array([0.0, 0.0, 0.0, 1.0])},
+              {'x': np.array([0.5, 0.5, -1.0]), 'q': q_yaw},
+              {'x': np.array([0.5, 2.0, 0.5]), 'q': q_pitch}]
+
+    outs = [cam.measurement(s, world) for s in states]
+    bout = bcam.measurement(world, {'x': torch.tensor(np.stack([s['x'] for s in states])),
+                                    'q': torch.tensor(np.stack([s['q'] for s in states]))})
+
+    for b, out in enumerate(outs):
+        assert out['visible_mask'].any(), f"drone {b} should see features for this setup"
+        assert torch.allclose(bout['image'][b], torch.from_numpy(out['image']), atol=1e-4), f"image mismatch drone {b}"
+        assert torch.equal(bout['visible_mask'][b], torch.from_numpy(out['visible_mask'])), f"visible_mask mismatch drone {b}"
+        assert torch.allclose(bout['depth'][b], torch.from_numpy(out['depth']).float(), atol=1e-4), f"depth mismatch drone {b}"
+        assert torch.allclose(bout['keypoints'][b], torch.from_numpy(out['keypoints']).float(), atol=1e-4), f"keypoints mismatch drone {b}"
+        assert torch.allclose(bout['keypoint_depths'][b], torch.from_numpy(out['keypoint_depths']).float(), atol=1e-4), f"keypoint_depths mismatch drone {b}"
+        assert torch.allclose(bout['visible_features'][b], torch.from_numpy(out['visible_features']).float(), atol=1e-4), f"visible_features mismatch drone {b}"
+
+
 def test_empty_world_feature_consistency():
     print("\nTesting empty world feature consistency")
     from rotorpy.world import World

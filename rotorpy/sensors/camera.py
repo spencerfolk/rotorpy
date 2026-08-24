@@ -36,18 +36,35 @@ class PinholeCamera:
             the camera frame.
         near_plane, minimum camera-frame z (in meters) for a feature to be
             rendered.
+        frame_rate, the rate at which the simulator captures frames from this
+            camera, Hz. None (default) renders at every simulation step. This
+            only affects collection during simulate(); direct calls to
+            measurement()/render() are unaffected.
+        splat_radius, default pixel half-width of the square patch each feature
+            is splatted onto during render(). Can be overridden per call.
 
     State space:
         The vehicle state dict is expected to contain 'x' (3,) position and
         'q' (4,) orientation quaternion [i, j, k, w].
     """
-    def __init__(self, intrinsics=None, extrinsics=None, near_plane=0.05):
+    def __init__(self, intrinsics=None, extrinsics=None, near_plane=0.05, frame_rate=None,
+                 splat_radius=1):
         """
         Parameters:
             intrinsics, dict of camera intrinsics, see class docstring
             extrinsics, dict of camera extrinsics, see class docstring
             near_plane, minimum camera-frame z for a feature to be rendered, m
+            frame_rate, frame capture rate used by simulate(), Hz; None renders
+                at every simulation step
+            splat_radius, default splat radius used by render(), pixels
         """
+        if frame_rate is not None and frame_rate <= 0:
+            raise ValueError("frame_rate must be positive or None, got {}".format(frame_rate))
+        if int(splat_radius) < 0:
+            raise ValueError("splat_radius must be non-negative, got {}".format(splat_radius))
+
+        self.frame_rate = frame_rate
+        self.splat_radius = int(splat_radius)
         if intrinsics is None:
             intrinsics = {'fx': 500.0, 'fy': 500.0, 'width': 640, 'height': 480, 'cx': 320.0, 'cy': 240.0,
                           'dist_coeffs': np.array([0.0, 0.0, 0.0, 0.0, 0.0])}  # [k1, k2, p1, p2, k3]
@@ -258,7 +275,7 @@ class PinholeCamera:
 
         return visible
 
-    def render(self, world, state, background_color=None, splat_radius=1, with_distortion=True):
+    def render(self, world, state, background_color=None, splat_radius=None, with_distortion=True):
         """
         Render a synthetic image of the world's surface features.
 
@@ -270,7 +287,8 @@ class PinholeCamera:
                 q, orientation quaternion [i, j, k, w], shape=(4,)
             background_color, RGB tuple in [0, 1] (default [0.9, 0.9, 0.9])
             splat_radius, features are splatted on a (2*splat_radius+1) square
-                patch centered on their rounded pixel
+                patch centered on their rounded pixel; None uses the camera's
+                instance default (see __init__)
             with_distortion, if True, apply the distortion model
 
         Outputs:
@@ -283,6 +301,8 @@ class PinholeCamera:
                 projected, (N, 2) pixels of all features (may be out of bounds)
                 depth, (N,) camera-frame z of all features
         """
+        if splat_radius is None:
+            splat_radius = self.splat_radius
         if background_color is None:
             background_color = [0.9, 0.9, 0.9]
 
