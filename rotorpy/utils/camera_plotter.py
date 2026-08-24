@@ -7,6 +7,90 @@ Functions for visualizing the output of a pinhole camera sensor.
 
 """
 
+def frustum_ray_directions(intrinsics, scale=1.0):
+    """
+    Compute the scaled ray directions of the 4 image corners in the camera
+    frame (x right, y down, z forward).
+
+    Inputs:
+        intrinsics, dict with keys fx, fy, cx, cy, width, height
+        scale, length in meters of the rays (distance from the apex to the
+            image-plane rectangle)
+
+    Outputs:
+        dirs_cam, (4, 3) array of unit ray directions scaled by scale
+    """
+    fx = float(intrinsics['fx'])
+    fy = float(intrinsics['fy'])
+    cx = float(intrinsics['cx'])
+    cy = float(intrinsics['cy'])
+    width = float(intrinsics['width'])
+    height = float(intrinsics['height'])
+
+    corners_uv = [(0.0, 0.0), (width, 0.0), (width, height), (0.0, height)]
+    dirs_cam = np.stack([np.array([(u - cx) / fx, (v - cy) / fy, 1.0]) for u, v in corners_uv], axis=0)
+    dirs_cam = (dirs_cam / np.linalg.norm(dirs_cam, axis=1, keepdims=True)) * scale
+    return dirs_cam
+
+def camera_frustum_segments(camera_pose, intrinsics, scale=1.0):
+    """
+    Compute the line segments making up a wireframe camera frustum in the
+    world frame: the 4 corner rays from the apex plus the 4 edges of the
+    image-plane rectangle.
+
+    Inputs:
+        camera_pose, dict with keys
+            x, camera world position, shape=(3,)
+            q, world-to-camera quaternion [i, j, k, w], shape=(4,)
+        intrinsics, dict with keys fx, fy, cx, cy, width, height
+        scale, length in meters of the frustum (distance from the apex to the
+            image-plane rectangle), default is 1.0
+
+    Outputs:
+        segments, (8, 2, 3) array of segment endpoints in the world frame.
+            Segments 0-3 are the corner rays, 4-7 the rectangle edges.
+    """
+    dirs_cam = frustum_ray_directions(intrinsics, scale)
+
+    x = np.asarray(camera_pose['x'], dtype=np.float64)
+    q = np.asarray(camera_pose['q'], dtype=np.float64)
+    R_WC = Rotation.from_quat(q).as_matrix()  # world -> camera
+    R_CW = R_WC.T  # camera -> world
+    corners_world = x + dirs_cam @ R_CW.T  # (4, 3)
+
+    segments = [[x, corner] for corner in corners_world]
+    for i in range(4):
+        segments.append([corners_world[i], corners_world[(i + 1) % 4]])
+    return np.array(segments)
+
+def camera_triad_segments(camera_pose, scale=1.0):
+    """
+    Compute the line segments of the camera-frame triad (x right, y down,
+    z forward) in the world frame.
+
+    Inputs:
+        camera_pose, dict with keys
+            x, camera world position, shape=(3,)
+            q, world-to-camera quaternion [i, j, k, w], shape=(4,)
+        scale, length in meters of each triad arm, default is 1.0
+
+    Outputs:
+        segments, (3, 2, 3) array of segment endpoints in the world frame,
+            one per camera axis in order x, y, z.
+    """
+    x = np.asarray(camera_pose['x'], dtype=np.float64)
+    q = np.asarray(camera_pose['q'], dtype=np.float64)
+    R_WC = Rotation.from_quat(q).as_matrix()  # world -> camera
+    R_CW = R_WC.T  # camera -> world
+
+    segments = []
+    for i in range(3):
+        axis_cam = np.zeros(3)
+        axis_cam[i] = scale
+        end_world = x + axis_cam @ R_CW.T
+        segments.append([x, end_world])
+    return np.array(segments)
+
 def draw_camera_frustum(ax, camera_pose, intrinsics, scale=1.0, color='k', alpha=1.0):
     """
     Draw a wireframe frustum on a 3D axis at a camera pose.
@@ -23,44 +107,18 @@ def draw_camera_frustum(ax, camera_pose, intrinsics, scale=1.0, color='k', alpha
         intrinsics, dict with keys fx, fy, cx, cy, width, height
         scale, length in meters of the frustum (distance from the apex to the
             image-plane rectangle), default is 1.0
-        color, color of the frustum lines, default is 'r'
-        alpha, transparency of the frustum lines, default is 0.5
+        color, color of the frustum lines, default is 'k'
+        alpha, transparency of the frustum lines, default is 1.0
 
     Outputs:
         artists, list of the Line artists that were added to the axis
     """
-    fx = float(intrinsics['fx'])
-    fy = float(intrinsics['fy'])
-    cx = float(intrinsics['cx'])
-    cy = float(intrinsics['cy'])
-    width = float(intrinsics['width'])
-    height = float(intrinsics['height'])
+    segments = camera_frustum_segments(camera_pose, intrinsics, scale)
 
-    # Ray directions of the 4 image corners in the camera frame (x right,
-    # y down, z forward). Normalize and scale to the requested frustum length.
-    corners_uv = [(0.0, 0.0), (width, 0.0), (width, height), (0.0, height)]
-    dirs_cam = np.stack([np.array([(u - cx) / fx, (v - cy) / fy, 1.0]) for u, v in corners_uv], axis=0)
-    dirs_cam = (dirs_cam / np.linalg.norm(dirs_cam, axis=1, keepdims=True)) * scale
-
-    # Transform the ray directions from the camera frame into the world frame.
-    x = np.asarray(camera_pose['x'], dtype=np.float64)
-    q = np.asarray(camera_pose['q'], dtype=np.float64)
-    R_WC = Rotation.from_quat(q).as_matrix()  # world -> camera
-    R_CW = R_WC.T  # camera -> world
-    corners_world = x + dirs_cam @ R_CW.T  # (4, 3)
-
-    # Apex at the camera position, with lines to each corner and a rectangle
-    # connecting the corners.
     artists = []
-    for corner in corners_world:
-        artists.append(ax.plot([x[0], corner[0]], [x[1], corner[1]], [x[2], corner[2]],
-                               color=color, alpha=alpha))
-    for i in range(4):
-        a = corners_world[i]
-        b = corners_world[(i + 1) % 4]
+    for (a, b) in segments:
         artists.append(ax.plot([a[0], b[0]], [a[1], b[1]], [a[2], b[2]],
                                color=color, alpha=alpha))
-
     return [artist for line in artists for artist in line]
 
 def draw_camera_triad(ax, camera_pose, scale=1.0, alpha=1.0):
@@ -82,19 +140,12 @@ def draw_camera_triad(ax, camera_pose, scale=1.0, alpha=1.0):
     Outputs:
         artists, list of the Line artists that were added to the axis
     """
-    x = np.asarray(camera_pose['x'], dtype=np.float64)
-    q = np.asarray(camera_pose['q'], dtype=np.float64)
-    R_WC = Rotation.from_quat(q).as_matrix()  # world -> camera
-    R_CW = R_WC.T  # camera -> world
+    segments = camera_triad_segments(camera_pose, scale)
 
     artists = []
-    for i, color in enumerate(['r', 'g', 'b']):
-        axis_cam = np.zeros(3)
-        axis_cam[i] = scale
-        end_world = x + axis_cam @ R_CW.T
-        artists.append(ax.plot([x[0], end_world[0]], [x[1], end_world[1]], [x[2], end_world[2]],
+    for (a, b), color in zip(segments, ['r', 'g', 'b']):
+        artists.append(ax.plot([a[0], b[0]], [a[1], b[1]], [a[2], b[2]],
                                color=color, alpha=alpha))
-
     return [artist for line in artists for artist in line]
 
 def plot_world_with_camera(ax, world, camera_pose=None, show_features=True, alpha=0.7,
