@@ -11,6 +11,7 @@ Split into two marker groups:
                   every push.
 """
 import ast
+import json
 import os
 import subprocess
 import sys
@@ -86,36 +87,52 @@ def test_example_syntax(script_path):
 # Tier 2: imports
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("script_path", example_scripts, ids=os.path.basename)
-def test_example_imports(script_path):
+def test_example_imports():
     """
-    Each example's top-level imports should resolve. This is the fast,
-    deterministic check for 'broken imports' - it doesn't depend on how
-    long the rest of the script takes to run.
+    Every example's top-level imports should resolve. All examples are
+    checked inside a single interpreter: launching one subprocess per
+    example paid torch/matplotlib startup cost 12 times over and dominated
+    the suite runtime (~45s vs ~5s).
     """
-    script_name = os.path.basename(script_path)
-    import_src = _extract_import_source(script_path)
+    scripts = []
+    for p in example_scripts:
+        src = _extract_import_source(p)
+        if src.strip():
+            scripts.append([os.path.basename(p), src])
+    if not scripts:
+        pytest.skip("no top-level imports found in any example.")
 
-    if not import_src.strip():
-        pytest.skip(f"{script_name}: no top-level imports found.")
-
+    runner = (
+        "import json, sys, traceback\n"
+        "failures = []\n"
+        "for name, src in json.loads(sys.argv[1]):\n"
+        "    try:\n"
+        "        exec(compile(src, name, 'exec'), {})\n"
+        "    except ModuleNotFoundError:\n"
+        "        pass  # optional dependency; same policy as the old per-example skips\n"
+        "    except Exception:\n"
+        "        failures.append((name, traceback.format_exc()))\n"
+        "if failures:\n"
+        "    for name, tb in failures:\n"
+        "        print('=== import error in %s ===' % name)\n"
+        "        print(tb)\n"
+        "    raise SystemExit(1)\n"
+    )
 
     env = os.environ.copy()
     env["MPLBACKEND"] = "Agg"
 
     result = subprocess.run(
-        [sys.executable, "-c", import_src],
+        [sys.executable, "-c", runner, json.dumps(scripts)],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        timeout=15,
+        timeout=120,
         env=env,
     )
 
     if result.returncode != 0:
-        if "ModuleNotFoundError" in result.stderr:
-            pytest.skip(f"{script_name}: skipped, missing optional dependency.\n{result.stderr.strip()}")
-        pytest.fail(f"{script_name}: import error:\n{result.stderr.strip()}")
+        pytest.fail(f"example import error(s):\n{result.stdout or result.stderr}")
 
 
 # ---------------------------------------------------------------------------
