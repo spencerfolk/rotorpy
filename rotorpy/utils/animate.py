@@ -6,7 +6,7 @@ from matplotlib.animation import FuncAnimation
 import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation
 
-from rotorpy.utils.camera_plotter import frustum_ray_directions
+from rotorpy.utils.camera_plotter import frustum_ray_directions, feature_colors
 
 from rotorpy.utils.shapes import Quadrotor
 
@@ -139,11 +139,7 @@ def animate(time, position, rotation, wind, animate_wind, world, filename=None, 
 
         features = world.get_surface_features()
         if features is not None and len(features) > 0:
-            descriptors = world.get_feature_descriptors()
-            if descriptors is None:
-                c = np.full((len(features), 3), 0.6)
-            else:
-                c = descriptors
+            c = feature_colors(world, len(features))
             ax.scatter(features[:, 0], features[:, 1], features[:, 2],
                        s=6, c=c, edgecolors='none', depthshade=False)
 

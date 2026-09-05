@@ -148,6 +148,36 @@ def draw_camera_triad(ax, camera_pose, scale=1.0, alpha=1.0):
                                color=color, alpha=alpha))
     return [artist for line in artists for artist in line]
 
+def feature_colors(world, n):
+    """
+    Return the per-feature RGB colors for plotting.
+
+    Prefers the world's ``get_feature_colors()`` (the RGB rendering colors).
+    Falls back to ``get_feature_descriptors()`` for legacy world-like objects
+    that only expose that method; if it does not yield (n, 3) RGB values,
+    a neutral grey is returned.
+
+    Inputs:
+        world, World-like object exposing the feature getters
+        n, the number of features
+
+    Outputs:
+        colors, (n, 3) float array
+    """
+    colors = None
+    getter = getattr(world, 'get_feature_colors', None)
+    if getter is None:
+        getter = getattr(world, 'get_feature_descriptors', None)
+    if getter is not None:
+        colors = getter()
+    if colors is None:
+        return np.full((n, 3), 0.6)
+    colors = np.asarray(colors)
+    if colors.ndim != 2 or colors.shape != (n, 3):
+        return np.full((n, 3), 0.6)
+    return colors
+
+
 def plot_world_with_camera(ax, world, camera_pose=None, show_features=True, alpha=0.7,
                            frustum_scale=None, intrinsics=None, show_drone=False,
                            drone_state=None, drone_scale_factor=1.0):
@@ -158,7 +188,7 @@ def plot_world_with_camera(ax, world, camera_pose=None, show_features=True, alph
     Inputs:
         ax, Axes3D object
         world, World object exposing draw(), get_surface_features(),
-            get_feature_descriptors(), and world['bounds']['extents']
+            get_feature_colors(), and world['bounds']['extents']
         camera_pose, dict with keys 'x' and 'q' describing the camera pose in
             the world frame, or None to skip the frustum, default is None
         show_features, if True and the world has surface features, scatter them
@@ -181,11 +211,7 @@ def plot_world_with_camera(ax, world, camera_pose=None, show_features=True, alph
     if show_features:
         features = world.get_surface_features()
         if features is not None and len(features) > 0:
-            descriptors = world.get_feature_descriptors()
-            if descriptors is None:
-                c = np.full((len(features), 3), 0.6)
-            else:
-                c = descriptors
+            c = feature_colors(world, len(features))
             ax.scatter(features[:, 0], features[:, 1], features[:, 2],
                        s=6, c=c, edgecolors='none', depthshade=False)
 

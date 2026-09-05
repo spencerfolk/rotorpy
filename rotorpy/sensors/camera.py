@@ -11,6 +11,38 @@ except ImportError:
 # noise_params=None (which disables the effect for that call).
 _NOISE_UNSET = object()
 
+# Which per-feature data a render/measurement returns. 'all' returns both the
+# RGB colors and the descriptor vectors. 'rgb' returns only colors (descriptors
+# are set to None), and 'descriptors' returns only the descriptor vectors
+# (colors are set to None). The rendered image is unchanged: colors are always
+# used for splatting regardless of this flag. The savings matter when frames
+# are collected in bulk -- descriptors are the bulk of the memory (K, N, D)
+# and are irrelevant to image-only or RGB-based learning, while colors are
+# redundant for VO/VIO pipelines that consume descriptors only.
+_FEATURE_OUTPUTS = ('all', 'rgb', 'descriptors')
+
+
+def _resolve_feature_output(requested, instance_default):
+    """
+    Resolve a feature_output selection, validating the value.
+
+    Inputs:
+        requested, the per-call override, or None to fall back to the camera's
+            instance default
+        instance_default, self.feature_output from the constructor
+
+    Outputs:
+        feature_output, one of 'all', 'rgb', 'descriptors'
+
+    Raises:
+        ValueError on an unrecognized value.
+    """
+    if requested is None:
+        requested = instance_default
+    if requested not in _FEATURE_OUTPUTS:
+        raise ValueError("feature_output must be one of {}, got {!r}".format(_FEATURE_OUTPUTS, requested))
+    return requested
+
 
 def _coerce_noise_params(noise_params, default_splat_radius):
     """
@@ -97,13 +129,17 @@ class PinholeCamera:
             is splatted onto during render(). Can be overridden per call.
         noise_params, optional dict enabling a visual noise effect applied by
             measurement() on top of render(). See __init__ for the tuning knobs.
+        feature_output, which per-feature data measurement()/render() return:
+            'all' (default) for both RGB colors and descriptor vectors, 'rgb'
+            for colors only, or 'descriptors' for descriptor vectors only. See
+            __init__ for details.
 
     State space:
         The vehicle state dict is expected to contain 'x' (3,) position and
         'q' (4,) orientation quaternion [i, j, k, w].
     """
     def __init__(self, intrinsics=None, extrinsics=None, near_plane=0.05, frame_rate=None,
-                 splat_radius=1, noise_params=None):
+                 splat_radius=1, noise_params=None, feature_output='all'):
         """
         Parameters:
             intrinsics, dict of camera intrinsics, see class docstring
@@ -125,6 +161,21 @@ class PinholeCamera:
                         given call; omit for fresh randomness each frame
                 Injected features carry no 3D position, so only the rendered
                 image is modified; keypoint/depth/visibility outputs stay clean.
+            feature_output, which per-feature data render()/measurement() put
+                in their output dicts. This trades memory for completeness when
+                bulk-collecting frames:
+                    'all' (default), return both the RGB colors and the
+                        descriptor vectors (colors, visible_colors, descriptors,
+                        visible_descriptors)
+                    'rgb', return only the RGB colors (descriptors and
+                        visible_descriptors are None). Use for image/RGB-based
+                        learning or when descriptors are not needed.
+                    'descriptors', return only the descriptor vectors (colors
+                        and visible_colors are None). Use for VO/VIO pipelines
+                        that consume descriptors only.
+                The rendered image is always splatted using colors regardless
+                of this setting. Can be overridden per call through render()/
+                measurement().
         """
         if frame_rate is not None and frame_rate <= 0:
             raise ValueError("frame_rate must be positive or None, got {}".format(frame_rate))
@@ -133,6 +184,7 @@ class PinholeCamera:
 
         self.frame_rate = frame_rate
         self.splat_radius = int(splat_radius)
+        self.feature_output = _resolve_feature_output(feature_output, 'all')
         if intrinsics is None:
             intrinsics = {'fx': 500.0, 'fy': 500.0, 'width': 640, 'height': 480, 'cx': 320.0, 'cy': 240.0,
                           'dist_coeffs': np.array([0.0, 0.0, 0.0, 0.0, 0.0])}  # [k1, k2, p1, p2, k3]
@@ -213,12 +265,14 @@ class PinholeCamera:
                 x, position, m, shape=(3,)
                 q, orientation quaternion [i, j, k, w], shape=(4,)
             world, World object exposing get_surface_features(),
-                get_feature_descriptors(), and get_block_bounding_boxes()
+                get_feature_colors(), get_feature_descriptors(), and
+                get_block_bounding_boxes()
             **render_kwargs, additional keyword arguments; any key accepted by
-                render() (e.g. background_color, splat_radius, with_distortion)
-                is forwarded. The special key noise_params (a dict of the same
-                tuning knobs as the constructor) overrides the camera's noise
-                for this call; noise_params=None disables the noise effect.
+                render() (e.g. background_color, splat_radius, with_distortion,
+                feature_output) is forwarded. The special key noise_params (a
+                dict of the same tuning knobs as the constructor) overrides the
+                camera's noise for this call; noise_params=None disables the
+                noise effect.
 
         Outputs:
             measurement, a dict with keys
@@ -229,6 +283,15 @@ class PinholeCamera:
                 visible_mask, (N,) bool over all world features
                 projected, (N, 2) pixels of all features (may be out of bounds)
                 depth, (N,) camera-frame z of all features
+                colors, (N, 3) RGB colors of all features, or None when
+                    feature_output is 'descriptors'
+                visible_colors, (M, 3) RGB colors of the visible features, or
+                    None when feature_output is 'descriptors'
+                descriptors, (N, D) generic descriptor vectors (e.g. SIFT/
+                    ALIKED) of all features, or None when feature_output is
+                    'rgb' or the world has none
+                visible_descriptors, (M, D) descriptor vectors of the visible
+                    features, or None when feature_output is 'rgb'
         """
         noise_params = render_kwargs.pop('noise_params', _NOISE_UNSET)
         if noise_params is _NOISE_UNSET:
@@ -405,13 +468,15 @@ class PinholeCamera:
 
         return visible
 
-    def render(self, world, state, background_color=None, splat_radius=None, with_distortion=True):
+    def render(self, world, state, background_color=None, splat_radius=None, with_distortion=True,
+               feature_output=None):
         """
         Render a synthetic image of the world's surface features.
 
         Inputs:
             world, World object exposing get_surface_features(),
-                get_feature_descriptors(), and get_block_bounding_boxes()
+                get_feature_colors(), get_feature_descriptors(), and
+                get_block_bounding_boxes()
             state, a dict describing the vehicle state with keys
                 x, position, m, shape=(3,)
                 q, orientation quaternion [i, j, k, w], shape=(4,)
@@ -420,6 +485,9 @@ class PinholeCamera:
                 patch centered on their rounded pixel; None uses the camera's
                 instance default (see __init__)
             with_distortion, if True, apply the distortion model
+            feature_output, per-call override of the camera's feature_output
+                setting ('all', 'rgb', or 'descriptors'); None uses the instance
+                default. See __init__ for the semantics.
 
         Outputs:
             render, a dict with keys
@@ -430,11 +498,22 @@ class PinholeCamera:
                 visible_mask, (N,) bool over all world features
                 projected, (N, 2) pixels of all features (may be out of bounds)
                 depth, (N,) camera-frame z of all features
+                colors, (N, 3) RGB colors of all features, or None if
+                    feature_output is 'descriptors' (or the world has no colors)
+                visible_colors, (M, 3) RGB colors of the visible features, or None
+                descriptors, (N, D) generic descriptor vectors (e.g. SIFT/
+                    ALIKED) of all features, or None if feature_output is 'rgb'
+                    or the world has none
+                visible_descriptors, (M, D) descriptor vectors of the visible
+                    features, or None
         """
         if splat_radius is None:
             splat_radius = self.splat_radius
         if background_color is None:
             background_color = [0.9, 0.9, 0.9]
+        feature_output = _resolve_feature_output(feature_output, self.feature_output)
+        include_colors = feature_output in ('all', 'rgb')
+        include_descriptors = feature_output in ('all', 'descriptors')
         # A scalar fill is dramatically faster than broadcasting an RGB list
         # into the array (np.full dispatches the latter through a slow
         # strided-copy path), so take that route whenever channels match.
@@ -452,6 +531,15 @@ class PinholeCamera:
         if features is None:
             features = np.empty((0, 3), dtype=np.float64)
 
+        colors = None
+        getter = getattr(world, 'get_feature_colors', None)
+        if getter is None:
+            getter = getattr(world, 'get_feature_descriptors', None)  # legacy worlds: RGB colors
+        if getter is not None:
+            colors = getter()
+
+        # Generic descriptor vectors (e.g. SIFT/ALIKED) carried alongside the
+        # RGB colors; these are passthrough outputs, not used in rendering.
         descriptors = None
         getter = getattr(world, 'get_feature_descriptors', None)
         if getter is not None:
@@ -472,6 +560,10 @@ class PinholeCamera:
                 'visible_mask': np.zeros(0, dtype=bool),
                 'projected': np.empty((0, 2), dtype=np.float64),
                 'depth': np.empty(0, dtype=np.float64),
+                'colors': None,
+                'visible_colors': None,
+                'descriptors': None,
+                'visible_descriptors': None,
             }
 
         points_cam = self.world_to_camera(features, camera_pose)
@@ -483,12 +575,23 @@ class PinholeCamera:
 
         visible_mask = (depth > self.near_plane) & (u >= 0) & (u < self.width) & (v >= 0) & (v < self.height) & not_occluded
 
-        if descriptors is None:
-            colors = np.full((N, 3), 0.6, dtype=np.float64)
+        if colors is None:
+            splat_colors = np.full((N, 3), 0.6, dtype=np.float64)
         else:
-            colors = np.clip(np.asarray(descriptors, dtype=np.float64).reshape(-1, 3), 0.0, 1.0)
-            if colors.shape[0] != N:
-                colors = np.full((N, 3), 0.6, dtype=np.float64)
+            splat_colors = np.asarray(colors, dtype=np.float64)
+            if splat_colors.shape != (N, 3):
+                splat_colors = np.full((N, 3), 0.6, dtype=np.float64)
+            else:
+                splat_colors = np.clip(splat_colors, 0.0, 1.0)
+
+        colors_out = splat_colors if include_colors else None
+
+        if include_descriptors and descriptors is not None:
+            desc_out = np.asarray(descriptors, dtype=np.float64)
+            if desc_out.ndim != 2 or desc_out.shape[0] != N:
+                desc_out = None
+        else:
+            desc_out = None
 
         visible_idx = np.nonzero(visible_mask)[0]
         if visible_idx.size > 0:
@@ -505,7 +608,7 @@ class PinholeCamera:
                      ((cc >= 0) & (cc < self.width))[:, None, :]
             flat = (np.clip(rr, 0, self.height - 1)[:, :, None] * self.width +
                     np.clip(cc, 0, self.width - 1)[:, None, :])[inside]
-            values = np.broadcast_to(colors[visible_idx].astype(np.float32)[:, None, None, :],
+            values = np.broadcast_to(splat_colors[visible_idx].astype(np.float32)[:, None, None, :],
                                      inside.shape + (3,))[inside]
             image.reshape(-1, 3)[flat] = values
 
@@ -517,6 +620,12 @@ class PinholeCamera:
             'visible_mask': visible_mask,
             'projected': projected,
             'depth': depth,
+            'colors': colors_out,
+            'visible_colors': (colors_out[visible_idx] if colors_out is not None
+                               else None),
+            'descriptors': desc_out,
+            'visible_descriptors': (desc_out[visible_idx] if desc_out is not None
+                                    else None),
         }
 
 
@@ -534,9 +643,13 @@ class BatchedPinholeCamera:
         device, torch device string, e.g. 'cpu' or 'cuda'
         noise_params, optional dict enabling the measurement() visual noise
             effect, see PinholeCamera.__init__ for the tuning knobs.
+        feature_output, which per-feature data measurement()/render() return:
+            'all' (default) for both RGB colors and descriptor vectors, 'rgb'
+            for colors only, or 'descriptors' for descriptor vectors only. See
+            PinholeCamera.__init__ for details.
     """
     def __init__(self, num_drones, intrinsics=None, extrinsics=None, near_plane=0.05, device='cpu',
-                 noise_params=None):
+                 noise_params=None, feature_output='all'):
         """
         Parameters:
             num_drones, number of drones in the batch
@@ -548,6 +661,10 @@ class BatchedPinholeCamera:
                 knobs for the measurement() visual noise effect, which randomly
                 injects synthetic features onto each frame independently per
                 drone. See PinholeCamera.__init__ for the knob descriptions.
+            feature_output, which per-feature data render()/measurement() put
+                in their output dicts ('all', 'rgb', or 'descriptors'),
+                suppressing colors or descriptors to save memory. Same
+                semantics and per-call override as PinholeCamera.__init__.
         """
         if torch is None:
             raise ImportError("torch required for BatchedPinholeCamera")
@@ -556,6 +673,7 @@ class BatchedPinholeCamera:
         self.device = torch.device(device)
         self.near_plane = near_plane
         self.noise_params = _coerce_noise_params(noise_params, default_splat_radius=1)
+        self.feature_output = _resolve_feature_output(feature_output, 'all')
 
         if intrinsics is None:
             intrinsics = {'fx': 500.0, 'fy': 500.0, 'width': 640, 'height': 480, 'cx': 320.0, 'cy': 240.0,
@@ -620,15 +738,17 @@ class BatchedPinholeCamera:
 
         Inputs:
             world, World object exposing get_surface_features(),
-                get_feature_descriptors(), and get_block_bounding_boxes()
+                get_feature_colors(), get_feature_descriptors(), and
+                get_block_bounding_boxes()
             states, a dict describing the vehicle states with keys
                 x, position, (B, 3) tensor
                 q, orientation quaternion [i, j, k, w], (B, 4) tensor
             **render_kwargs, additional keyword arguments; any key accepted by
-                render() (e.g. background_color, splat_radius, with_distortion)
-                is forwarded. The special key noise_params (a dict of the same
-                tuning knobs as the constructor) overrides the camera's noise
-                for this call; noise_params=None disables the noise effect.
+                render() (e.g. background_color, splat_radius, with_distortion,
+                feature_output) is forwarded. The special key noise_params (a
+                dict of the same tuning knobs as the constructor) overrides the
+                camera's noise for this call; noise_params=None disables the
+                noise effect.
 
         Outputs:
             measurement, a dict with keys
@@ -638,6 +758,16 @@ class BatchedPinholeCamera:
                 keypoints, list of length B of (M_b, 2) pixel tensors
                 keypoint_depths, list of length B of (M_b,) depth tensors
                 visible_features, list of length B of (M_b, 3) world-position tensors
+                colors, (B, N, 3) RGB colors of all features, or None when
+                    feature_output is 'descriptors'
+                visible_colors, list of length B of (M_b, 3) RGB colors of the
+                    visible features, or None when feature_output is 'descriptors'
+                descriptors, (B, N, D) generic descriptor vectors (e.g. SIFT/
+                    ALIKED) of all features, or None when feature_output is
+                    'rgb' or the world has none
+                visible_descriptors, list of length B of (M_b, D) descriptor
+                    vectors of the visible features, or None when feature_output
+                    is 'rgb'
         """
         noise_params = render_kwargs.pop('noise_params', _NOISE_UNSET)
         if noise_params is _NOISE_UNSET:
@@ -707,13 +837,15 @@ class BatchedPinholeCamera:
         measurement['image'].reshape(B * H * W, 3).index_put_((full_idx,), values)
         return measurement
 
-    def render(self, world, states, background_color=None, splat_radius=1, with_distortion=True):
+    def render(self, world, states, background_color=None, splat_radius=1, with_distortion=True,
+               feature_output=None):
         """
         Render synthetic images for a batch of drones.
 
         Inputs:
             world, World object exposing get_surface_features(),
-                get_feature_descriptors(), and get_block_bounding_boxes()
+                get_feature_colors(), get_feature_descriptors(), and
+                get_block_bounding_boxes()
             states, a dict describing the vehicle states with keys
                 x, position, (B, 3) tensor
                 q, orientation quaternion [i, j, k, w], (B, 4) tensor
@@ -721,6 +853,9 @@ class BatchedPinholeCamera:
             splat_radius, features are splatted on a (2*splat_radius+1) square
                 patch centered on their rounded pixel
             with_distortion, if True, apply the distortion model
+            feature_output, per-call override of the camera's feature_output
+                setting ('all', 'rgb', or 'descriptors'); None uses the instance
+                default. See PinholeCamera.__init__ for the semantics.
 
         Outputs:
             render, a dict with keys
@@ -730,9 +865,22 @@ class BatchedPinholeCamera:
                 keypoints, list of length B of (M_b, 2) pixel tensors
                 keypoint_depths, list of length B of (M_b,) depth tensors
                 visible_features, list of length B of (M_b, 3) world-position tensors
+                colors, (B, N, 3) RGB colors of all features, or None when
+                    feature_output is 'descriptors'
+                visible_colors, list of length B of (M_b, 3) RGB colors of the
+                    visible features, or None when feature_output is 'descriptors'
+                descriptors, (B, N, D) generic descriptor vectors (e.g. SIFT/
+                    ALIKED) of all features, or None when feature_output is
+                    'rgb' or the world has none
+                visible_descriptors, list of length B of (M_b, D) descriptor
+                    vectors of the visible features, or None when feature_output
+                    is 'rgb'
         """
         if background_color is None:
             background_color = [0.9, 0.9, 0.9]
+        feature_output = _resolve_feature_output(feature_output, self.feature_output)
+        include_colors = feature_output in ('all', 'rgb')
+        include_descriptors = feature_output in ('all', 'descriptors')
 
         x = torch.as_tensor(states['x']).float().to(self.device)
         q = torch.as_tensor(states['q']).float().to(self.device)
@@ -747,6 +895,15 @@ class BatchedPinholeCamera:
         if features is None:
             features = np.empty((0, 3), dtype=np.float64)
 
+        colors = None
+        getter = getattr(world, 'get_feature_colors', None)
+        if getter is None:
+            getter = getattr(world, 'get_feature_descriptors', None)  # legacy worlds: RGB colors
+        if getter is not None:
+            colors = getter()
+
+        # Generic descriptor vectors (e.g. SIFT/ALIKED) carried alongside the
+        # RGB colors; these are passthrough outputs, not used in rendering.
         descriptors = None
         getter = getattr(world, 'get_feature_descriptors', None)
         if getter is not None:
@@ -774,6 +931,10 @@ class BatchedPinholeCamera:
                 'keypoints': [empty_kp for _ in range(B)],
                 'keypoint_depths': [empty_d for _ in range(B)],
                 'visible_features': [empty_f for _ in range(B)],
+                'colors': None,
+                'visible_colors': None,
+                'descriptors': None,
+                'visible_descriptors': None,
             }
 
         # World-to-camera rotation per drone: R_WC = R_BC @ R_WB^T.
@@ -828,20 +989,31 @@ class BatchedPinholeCamera:
 
         visible_mask = (depth > self.near_plane) & (u >= 0) & (u < self.width) & (v >= 0) & (v < self.height) & not_occluded
 
-        if descriptors is None:
-            colors = torch.full((N, 3), 0.6, dtype=torch.float32, device=self.device)
+        if colors is None:
+            splat_colors = torch.full((N, 3), 0.6, dtype=torch.float32, device=self.device)
         else:
-            colors = torch.clamp(torch.tensor(np.asarray(descriptors, dtype=np.float64).reshape(-1, 3),
-                                              dtype=torch.float32, device=self.device), 0.0, 1.0)
-            if colors.shape[0] != N:
-                colors = torch.full((N, 3), 0.6, dtype=torch.float32, device=self.device)
+            colors_np = np.asarray(colors, dtype=np.float64)
+            if colors_np.shape != (N, 3):
+                splat_colors = torch.full((N, 3), 0.6, dtype=torch.float32, device=self.device)
+            else:
+                splat_colors = torch.clamp(torch.tensor(colors_np, dtype=torch.float32,
+                                                        device=self.device), 0.0, 1.0)
+
+        if include_descriptors and descriptors is not None:
+            desc_np = np.asarray(descriptors, dtype=np.float64)
+            if desc_np.ndim != 2 or desc_np.shape[0] != N:
+                descriptors_t = None
+            else:
+                descriptors_t = torch.tensor(desc_np, dtype=torch.float32, device=self.device)
+        else:
+            descriptors_t = None
 
         # Splat visible features onto the (B, H*W, 3) image via index_put_.
         if torch.any(visible_mask):
             b_idx, n_idx = torch.nonzero(visible_mask, as_tuple=True)  # (K,)
             r = torch.round(v[b_idx, n_idx]).long()
             c = torch.round(u[b_idx, n_idx]).long()
-            color_src = colors[n_idx]  # (K, 3)
+            color_src = splat_colors[n_idx]  # (K, 3)
             dr = torch.arange(-splat_radius, splat_radius + 1, device=self.device)
             dc = torch.arange(-splat_radius, splat_radius + 1, device=self.device)
             rows = r[:, None, None] + dr[None, :, None]  # (K, Pr, 1)
@@ -860,11 +1032,25 @@ class BatchedPinholeCamera:
         keypoints = []
         keypoint_depths = []
         visible_features = []
+        visible_colors = []
+        visible_descriptors = []
         for b in range(B):
             mask = visible_mask[b]
             keypoints.append(torch.stack([u[b][mask], v[b][mask]], dim=-1))
             keypoint_depths.append(depth[b][mask])
             visible_features.append(features_t[mask])
+            visible_colors.append(splat_colors[mask] if include_colors else None)
+            visible_descriptors.append(descriptors_t[mask] if descriptors_t is not None else None)
+
+        if include_colors:
+            colors_out = splat_colors.unsqueeze(0).expand(B, N, -1)
+        else:
+            colors_out = None
+
+        if descriptors_t is None:
+            descriptors_out = None
+        else:
+            descriptors_out = descriptors_t.unsqueeze(0).expand(B, N, -1)
 
         return {
             'image': image,
@@ -873,6 +1059,10 @@ class BatchedPinholeCamera:
             'keypoints': keypoints,
             'keypoint_depths': keypoint_depths,
             'visible_features': visible_features,
+            'colors': colors_out,
+            'visible_colors': visible_colors,
+            'descriptors': descriptors_out,
+            'visible_descriptors': visible_descriptors,
         }
 
 

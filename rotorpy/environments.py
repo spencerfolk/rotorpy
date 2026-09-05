@@ -211,15 +211,25 @@ class Environment():
             savepath = savepath + ".npz"
 
         cm = self.result['camera_measurements']
-        np.savez_compressed(savepath,
-                            time=cm['time'],
-                            image=cm['image'],
-                            visible_mask=cm['visible_mask'],
-                            projected=cm['projected'],
-                            depth=cm['depth'],
-                            keypoints=np.array(cm['keypoints'], dtype=object),
-                            keypoint_depths=np.array(cm['keypoint_depths'], dtype=object),
-                            visible_features=np.array(cm['visible_features'], dtype=object))
+        data = {
+            'time': cm['time'],
+            'image': cm['image'],
+            'visible_mask': cm['visible_mask'],
+            'projected': cm['projected'],
+            'depth': cm['depth'],
+            'keypoints': np.array(cm['keypoints'], dtype=object),
+            'keypoint_depths': np.array(cm['keypoint_depths'], dtype=object),
+            'visible_features': np.array(cm['visible_features'], dtype=object),
+        }
+        if cm.get('colors') is not None:
+            data['colors'] = cm['colors']
+        if cm.get('visible_colors') is not None:
+            data['visible_colors'] = np.array(cm['visible_colors'], dtype=object)
+        if cm.get('descriptors') is not None:
+            data['descriptors'] = cm['descriptors']
+        if cm.get('visible_descriptors') is not None:
+            data['visible_descriptors'] = np.array(cm['visible_descriptors'], dtype=object)
+        np.savez_compressed(savepath, **data)
 
         if save_pngs:
             frames_dir = savepath[:-len('.npz')] + '_frames'

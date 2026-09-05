@@ -199,11 +199,14 @@ def merge_camera_measurements(frames, times):
     Combine a list of camera measurement dicts (as returned by
     PinholeCamera.measurement()) into a single dict.
 
-    Fixed-size outputs (image, visible_mask, projected, depth) are stacked over
-    frames. The image is converted from float32 in [0, 1] to uint8 to keep the
-    memory footprint manageable; divide by 255.0 to recover floats. Variable
-    size outputs (keypoints, keypoint_depths, visible_features) are kept as
-    lists of per-frame arrays since their lengths vary between frames.
+    Fixed-size outputs (image, visible_mask, projected, depth, colors,
+    descriptors) are stacked over frames. The image is converted from float32
+    in [0, 1] to uint8 to keep the memory footprint manageable; divide by 255.0
+    to recover floats. Variable size outputs (keypoints, keypoint_depths,
+    visible_features, visible_colors, visible_descriptors) are kept as lists
+    of per-frame arrays since their lengths vary between frames. Keys for data
+    the camera opted out of (feature_output 'rgb' or 'descriptors', or a world
+    without descriptor vectors) are returned as None.
 
     Inputs:
         frames, list of K measurement dicts from PinholeCamera.measurement()
@@ -216,19 +219,35 @@ def merge_camera_measurements(frames, times):
             visible_mask, (K, N) bool array over all world features
             projected, (K, N, 2) array of pixels of all features
             depth, (K, N) array of camera-frame z of all features
+            colors, (K, N, 3) array of RGB feature colors, or None when the
+                camera's feature_output is 'descriptors'
+            descriptors, (K, N, D) array of generic feature descriptor vectors,
+                or None when the camera's feature_output is 'rgb' or the world
+                carries no descriptor vectors
             keypoints, list of K (M_k, 2) arrays
             keypoint_depths, list of K (M_k,) arrays
             visible_features, list of K (M_k, 3) arrays
+            visible_colors, list of K (M_k, 3) arrays, or None when the
+                camera's feature_output is 'descriptors'
+            visible_descriptors, list of K (M_k, D) arrays, or None when the
+                camera's feature_output is 'rgb' or the world carries no
+                descriptor vectors
     """
+    has_colors = bool(frames) and frames[0].get('colors') is not None
+    has_descriptors = bool(frames) and frames[0].get('descriptors') is not None
     return {
         'time': np.array(times, dtype=float),
         'image': np.stack([np.round(np.clip(f['image'], 0.0, 1.0)*255.0).astype(np.uint8) for f in frames]),
         'visible_mask': np.stack([f['visible_mask'] for f in frames]),
         'projected': np.stack([f['projected'] for f in frames]),
         'depth': np.stack([f['depth'] for f in frames]),
+        'colors': (np.stack([f['colors'] for f in frames]) if has_colors else None),
+        'descriptors': (np.stack([f['descriptors'] for f in frames]) if has_descriptors else None),
         'keypoints': [f['keypoints'] for f in frames],
         'keypoint_depths': [f['keypoint_depths'] for f in frames],
         'visible_features': [f['visible_features'] for f in frames],
+        'visible_colors': ([f['visible_colors'] for f in frames] if has_colors else None),
+        'visible_descriptors': ([f['visible_descriptors'] for f in frames] if has_descriptors else None),
     }
 
 def merge_dicts(dicts_in):
