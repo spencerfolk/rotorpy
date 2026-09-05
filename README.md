@@ -2,13 +2,11 @@
 A Python-based multirotor simulation environment with aerodynamic wrenches, useful for education and research in estimation, planning, and control for UAVs.
 <p align="center"><img src="/media/double_pillar.gif" width="32%"/><img src="/media/gusty.gif" width="32%"/><img src="/media/minsnap.gif" width="32%"/></p>
 
-**NEW in `v2.0`**: RotorPy now includes a batched environment which can simulate multiple drones in parallel on CPU or GPU. For simulations of >1000 drones, we have observed speedups of 25x purely on CPU compared to simulating all drones sequentially. We have also implemented batched versions of existing control, trajectory, and wind classes. See `examples/batched_simulation.py` for how to use the new batched simulation, and `examples/benchmark_batched_simulation.py` to measure the speedup on your own system.
+**NEW in `v3.0`**: RotorPy now includes a fast, non-photorealistic camera sensor for developing and testing vision algorithms (visual odometry, image correspondence, learning-based vision policies, etc.). World blocks can now carry visual features (3D points with RGB colors and optional descriptor vectors) specified either directly in the world JSON or using generator scripts.
 
-<img src = "/media/batched_simulation_performance.png"/>
+`PinholeCamera.render()` projects those features into an image with a customizable pinhole + distortion model and explicit occlusion handling, and `BatchedPinholeCamera` renders for many drones in parallel on CPU or GPU. Each output pairs per-feature 3D/keypoint information with the RGB `colors` and descriptor `descriptors`, and the `feature_output` toggle (`'all'`/`'rgb'`/`'descriptors'`) trims either when collecting large datasets. See `rotorpy/examples/camera_visualization.py` for a complete example.
 
-We have also updated the Gymnasium environment in `rotorpy/learning/` to use the batched dynamics, allowing faster RL training by simulating multiple vehicles in parallel with domain randomization. Running `examples/ppo_hover_train.py` produces a functional hovering policy in about 5 million simulation timesteps, which takes under 4 minutes of wall clock time on a MacBook Air M3. (Note: This script acts as a good starting point, but for sim2real, more careful reward engineering, domain randomization, and hyperparameter tuning will be necessary.)
-
-<p align="center"><img src="/media/ppo_hover_20k.gif" width="32%"/><img src="/media/ppo_hover_600k.gif" width="32%"/><img src="/media/ppo_hover_1000k.gif" width="32%"/></p>
+<!-- TODO: Add images or animations highlighting the new camera capability. -->
 
 ## Purpose and Model Scope
 The original focus of this simulator was on accurately simulating rotary-wing UAV dynamics with added lumped parameter representations of the aerodynamics for course design and exploratory research. These aerodynamic effects, listed below, are negligible at hover in still air; however, as relative airspeed increases (e.g. for aggressive maneuvers or in the presence of high winds), they quickly become noticeable and force the student/researcher to reconcile with them. 
