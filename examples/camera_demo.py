@@ -107,8 +107,21 @@ def main():
     # frame_rate decouples the capture rate from sim_rate; None would render
     # every simulation step. splat_radius enlarges each feature's pixel patch
     # so features are easier to see in the rendered frames.
-    camera = PinholeCamera(intrinsics=intrinsics, extrinsics=extrinsics,
-                           frame_rate=25, splat_radius=3)
+    # camera = PinholeCamera(intrinsics=intrinsics, extrinsics=extrinsics,
+    #                        frame_rate=25, splat_radius=3)
+
+    # Optional visual noise effect, applied on top of the raw render by
+    # measurement(). Off by default. Tuning knobs (noise_params dict):
+    #   feature_rate  mean number of synthetic features injected per frame
+    #                 (count is Poisson-distributed; the primary intensity knob)
+    #   splat_radius  pixel patch size of each injected feature
+    #   intensity     color strength in [0, 1] (1.0 = full-strength artifacts)
+    #   seed          optional int for reproducible injection (omit for fresh
+    #                 randomness each frame)
+    # camera = PinholeCamera(intrinsics=intrinsics, extrinsics=extrinsics,
+    #                        frame_rate=25, splat_radius=3,
+    #                        noise_params={'feature_rate': 20, 'splat_radius': 2,
+    #                                      'intensity': 0.7})
 
     circle_center = np.array([0, 0, 0])
     circle_radius = np.array([3, 3, 0])

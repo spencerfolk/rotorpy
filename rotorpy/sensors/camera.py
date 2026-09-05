@@ -7,6 +7,59 @@ except ImportError:
     torch = None
 
 
+# Sentinel distinguishing "no noise_params keyword passed" from an explicit
+# noise_params=None (which disables the effect for that call).
+_NOISE_UNSET = object()
+
+
+def _coerce_noise_params(noise_params, default_splat_radius):
+    """
+    Validate a noise_params dict and fill in defaults.
+
+    Inputs:
+        noise_params, None to disable noise, or a dict with keys
+            feature_rate, mean number of injected features per frame (required)
+            splat_radius, pixel radius of each injected feature (defaults to
+                default_splat_radius)
+            intensity, color strength in [0, 1] (default 1.0)
+            seed, optional int for reproducible injection
+        default_splat_radius, splat radius used when one is not given
+
+    Outputs:
+        coerced, a normalized dict, or None if noise_params is None
+
+    Raises:
+        ValueError if noise_params is malformed.
+    """
+    if noise_params is None:
+        return None
+    if not isinstance(noise_params, dict):
+        raise ValueError("noise_params must be a dict or None, got {}".format(type(noise_params).__name__))
+    params = dict(noise_params)
+
+    if 'feature_rate' not in params:
+        raise ValueError("noise_params must specify 'feature_rate'")
+    rate = float(params['feature_rate'])
+    if rate < 0:
+        raise ValueError("noise_params['feature_rate'] must be >= 0, got {}".format(rate))
+    params['feature_rate'] = rate
+
+    radius = params.get('splat_radius', default_splat_radius)
+    if radius is None:
+        radius = default_splat_radius
+    radius = int(radius)
+    if radius < 0:
+        raise ValueError("noise_params['splat_radius'] must be >= 0, got {}".format(radius))
+    params['splat_radius'] = radius
+
+    intensity = float(params.get('intensity', 1.0))
+    if not 0.0 <= intensity <= 1.0:
+        raise ValueError("noise_params['intensity'] must be in [0, 1], got {}".format(intensity))
+    params['intensity'] = intensity
+
+    return params
+
+
 class PinholeCamera:
     """
     Simulated pinhole camera sensor.
@@ -42,13 +95,15 @@ class PinholeCamera:
             measurement()/render() are unaffected.
         splat_radius, default pixel half-width of the square patch each feature
             is splatted onto during render(). Can be overridden per call.
+        noise_params, optional dict enabling a visual noise effect applied by
+            measurement() on top of render(). See __init__ for the tuning knobs.
 
     State space:
         The vehicle state dict is expected to contain 'x' (3,) position and
         'q' (4,) orientation quaternion [i, j, k, w].
     """
     def __init__(self, intrinsics=None, extrinsics=None, near_plane=0.05, frame_rate=None,
-                 splat_radius=1):
+                 splat_radius=1, noise_params=None):
         """
         Parameters:
             intrinsics, dict of camera intrinsics, see class docstring
@@ -57,6 +112,19 @@ class PinholeCamera:
             frame_rate, frame capture rate used by simulate(), Hz; None renders
                 at every simulation step
             splat_radius, default splat radius used by render(), pixels
+            noise_params, None (default) for no noise, or a dict of tuning
+                knobs for the measurement() visual noise effect which randomly
+                injects synthetic features onto each frame:
+                    feature_rate, mean number of injected features per frame;
+                        the per-frame count is drawn from Poisson(feature_rate)
+                    splat_radius, pixel patch size of each injected feature;
+                        defaults to the camera's splat_radius
+                    intensity, color strength in [0, 1]; 1.0 is full-strength
+                        random colors, lower values give subtler artifacts
+                    seed, optional int making the injection reproducible for a
+                        given call; omit for fresh randomness each frame
+                Injected features carry no 3D position, so only the rendered
+                image is modified; keypoint/depth/visibility outputs stay clean.
         """
         if frame_rate is not None and frame_rate <= 0:
             raise ValueError("frame_rate must be positive or None, got {}".format(frame_rate))
@@ -74,6 +142,7 @@ class PinholeCamera:
         self.intrinsics = intrinsics
         self.extrinsics = extrinsics
         self.near_plane = near_plane
+        self.noise_params = _coerce_noise_params(noise_params, default_splat_radius=self.splat_radius)
 
         # Denormalized intrinsics.
         self.fx = float(intrinsics['fx'])
@@ -133,7 +202,11 @@ class PinholeCamera:
         Compute a camera measurement given the vehicle state and world.
 
         This is the primary sensor interface, consistent with the measurement()
-        pattern used by other RotorPy sensors (IMU, mocap, range sensors).
+        pattern used by other RotorPy sensors (IMU, mocap, range sensors). The
+        raw render() output is produced first, then optional measurement
+        effects are layered on top. The visual noise effect (see noise_params
+        in __init__) randomly injects synthetic features onto the frame when
+        enabled; additional effects can be added here later.
 
         Inputs:
             state, a dict describing the vehicle state with keys
@@ -141,8 +214,11 @@ class PinholeCamera:
                 q, orientation quaternion [i, j, k, w], shape=(4,)
             world, World object exposing get_surface_features(),
                 get_feature_descriptors(), and get_block_bounding_boxes()
-            **render_kwargs, additional keyword arguments forwarded to render()
-                (e.g. background_color, splat_radius, with_distortion)
+            **render_kwargs, additional keyword arguments; any key accepted by
+                render() (e.g. background_color, splat_radius, with_distortion)
+                is forwarded. The special key noise_params (a dict of the same
+                tuning knobs as the constructor) overrides the camera's noise
+                for this call; noise_params=None disables the noise effect.
 
         Outputs:
             measurement, a dict with keys
@@ -154,7 +230,61 @@ class PinholeCamera:
                 projected, (N, 2) pixels of all features (may be out of bounds)
                 depth, (N,) camera-frame z of all features
         """
-        return self.render(world, state, **render_kwargs)
+        noise_params = render_kwargs.pop('noise_params', _NOISE_UNSET)
+        if noise_params is _NOISE_UNSET:
+            noise_params = self.noise_params
+        else:
+            noise_params = _coerce_noise_params(noise_params, default_splat_radius=self.splat_radius)
+        measurement = self.render(world, state, **render_kwargs)
+        if noise_params is not None:
+            self._inject_noise(measurement, noise_params)
+        return measurement
+
+    def _inject_noise(self, measurement, noise_params):
+        """
+        Randomly inject synthetic features onto the rendered image.
+
+        Phantom features are drawn as random-color splats at random in-bounds
+        pixels, simulating sensor artifacts / false detections. They carry no
+        3D world position, so only measurement['image'] is modified; the
+        keypoint/depth/visibility arrays remain clean ground truth.
+
+        Inputs:
+            measurement, dict as returned by render()
+            noise_params, a coerced dict with keys feature_rate, splat_radius,
+                intensity, and an optional seed
+
+        Outputs:
+            measurement, the same dict with image modified in place
+        """
+        rng = np.random.default_rng(noise_params.get('seed'))
+        rate = noise_params['feature_rate']
+        if rate <= 0:
+            return measurement
+        K = int(rng.poisson(rate))
+        if K == 0:
+            return measurement
+        radius = noise_params['splat_radius']
+        intensity = noise_params['intensity']
+
+        u = rng.uniform(0.0, self.width, size=K)
+        v = rng.uniform(0.0, self.height, size=K)
+        colors = rng.uniform(0.0, 1.0, size=(K, 3)) * intensity
+
+        image = measurement['image']
+        centers_c = np.clip(np.round(u).astype(np.intp), 0, self.width - 1)
+        centers_r = np.clip(np.round(v).astype(np.intp), 0, self.height - 1)
+        offsets = np.arange(-radius, radius + 1)
+        rr = centers_r[:, None] + offsets[None, :]              # (K, Pr)
+        cc = centers_c[:, None] + offsets[None, :]              # (K, Pc)
+        inside = ((rr >= 0) & (rr < self.height))[:, :, None] & \
+                 ((cc >= 0) & (cc < self.width))[:, None, :]
+        flat = (np.clip(rr, 0, self.height - 1)[:, :, None] * self.width +
+                np.clip(cc, 0, self.width - 1)[:, None, :])[inside]
+        values = np.broadcast_to(colors.astype(np.float32)[:, None, None, :],
+                                 inside.shape + (3,))[inside]
+        image.reshape(-1, 3)[flat] = values
+        return measurement
 
     def world_to_camera(self, points_world, camera_pose):
         """
@@ -402,8 +532,11 @@ class BatchedPinholeCamera:
         extrinsics, dict of camera extrinsics, see PinholeCamera
         near_plane, minimum camera-frame z for a feature to be rendered, m
         device, torch device string, e.g. 'cpu' or 'cuda'
+        noise_params, optional dict enabling the measurement() visual noise
+            effect, see PinholeCamera.__init__ for the tuning knobs.
     """
-    def __init__(self, num_drones, intrinsics=None, extrinsics=None, near_plane=0.05, device='cpu'):
+    def __init__(self, num_drones, intrinsics=None, extrinsics=None, near_plane=0.05, device='cpu',
+                 noise_params=None):
         """
         Parameters:
             num_drones, number of drones in the batch
@@ -411,6 +544,10 @@ class BatchedPinholeCamera:
             extrinsics, dict of camera extrinsics, see PinholeCamera
             near_plane, minimum camera-frame z for a feature to be rendered, m
             device, torch device string
+            noise_params, None (default) for no noise, or a dict of tuning
+                knobs for the measurement() visual noise effect, which randomly
+                injects synthetic features onto each frame independently per
+                drone. See PinholeCamera.__init__ for the knob descriptions.
         """
         if torch is None:
             raise ImportError("torch required for BatchedPinholeCamera")
@@ -418,6 +555,7 @@ class BatchedPinholeCamera:
         self.num_drones = num_drones
         self.device = torch.device(device)
         self.near_plane = near_plane
+        self.noise_params = _coerce_noise_params(noise_params, default_splat_radius=1)
 
         if intrinsics is None:
             intrinsics = {'fx': 500.0, 'fy': 500.0, 'width': 640, 'height': 480, 'cx': 320.0, 'cy': 240.0,
@@ -474,7 +612,11 @@ class BatchedPinholeCamera:
         Compute camera measurements for a batch of drones.
 
         This is the primary sensor interface, consistent with the measurement()
-        pattern used by other RotorPy sensors (IMU, mocap, range sensors).
+        pattern used by other RotorPy sensors (IMU, mocap, range sensors). The
+        raw render() output is produced first, then optional measurement
+        effects are layered on top. The visual noise effect (see noise_params
+        in __init__) randomly injects synthetic features onto each frame when
+        enabled; additional effects can be added here later.
 
         Inputs:
             world, World object exposing get_surface_features(),
@@ -482,8 +624,11 @@ class BatchedPinholeCamera:
             states, a dict describing the vehicle states with keys
                 x, position, (B, 3) tensor
                 q, orientation quaternion [i, j, k, w], (B, 4) tensor
-            **render_kwargs, additional keyword arguments forwarded to render()
-                (e.g. background_color, splat_radius, with_distortion)
+            **render_kwargs, additional keyword arguments; any key accepted by
+                render() (e.g. background_color, splat_radius, with_distortion)
+                is forwarded. The special key noise_params (a dict of the same
+                tuning knobs as the constructor) overrides the camera's noise
+                for this call; noise_params=None disables the noise effect.
 
         Outputs:
             measurement, a dict with keys
@@ -494,7 +639,73 @@ class BatchedPinholeCamera:
                 keypoint_depths, list of length B of (M_b,) depth tensors
                 visible_features, list of length B of (M_b, 3) world-position tensors
         """
-        return self.render(world, states, **render_kwargs)
+        noise_params = render_kwargs.pop('noise_params', _NOISE_UNSET)
+        if noise_params is _NOISE_UNSET:
+            noise_params = self.noise_params
+        else:
+            noise_params = _coerce_noise_params(noise_params, default_splat_radius=1)
+        measurement = self.render(world, states, **render_kwargs)
+        if noise_params is not None:
+            self._inject_noise_batched(measurement, noise_params)
+        return measurement
+
+    def _inject_noise_batched(self, measurement, noise_params):
+        """
+        Randomly inject synthetic features onto each drone's rendered frame.
+
+        Identical semantics to PinholeCamera._inject_noise, but applied
+        independently per drone in a batch: each drone gets its own Poisson
+        count of phantom features at random pixels. Only the image tensor is
+        modified; keypoint/depth/visibility outputs stay clean ground truth.
+
+        Inputs:
+            measurement, dict as returned by BatchedPinholeCamera.render()
+            noise_params, a coerced dict with keys feature_rate, splat_radius,
+                intensity, and an optional seed
+
+        Outputs:
+            measurement, the same dict with image modified in place
+        """
+        rng = np.random.default_rng(noise_params.get('seed'))
+        rate = noise_params['feature_rate']
+        if rate <= 0:
+            return measurement
+        radius = noise_params['splat_radius']
+        intensity = noise_params['intensity']
+
+        B, H, W, _ = measurement['image'].shape
+        b_list, r_list, c_list, color_list = [], [], [], []
+        for b in range(B):
+            K = int(rng.poisson(rate))
+            if K == 0:
+                continue
+            u = rng.uniform(0.0, W, size=K)
+            v = rng.uniform(0.0, H, size=K)
+            colors = rng.uniform(0.0, 1.0, size=(K, 3)) * intensity
+            b_list.append(np.full(K, b, dtype=np.int64))
+            r_list.append(np.round(v).astype(np.int64))
+            c_list.append(np.round(u).astype(np.int64))
+            color_list.append(colors)
+        if not b_list:
+            return measurement
+
+        b_idx = torch.from_numpy(np.concatenate(b_list)).to(self.device)
+        r = torch.from_numpy(np.concatenate(r_list)).to(self.device)
+        c = torch.from_numpy(np.concatenate(c_list)).to(self.device)
+        color_src = torch.from_numpy(np.concatenate(color_list, axis=0).astype(np.float32)).to(self.device)
+
+        dr = torch.arange(-radius, radius + 1, device=self.device)
+        dc = torch.arange(-radius, radius + 1, device=self.device)
+        rows = r[:, None, None] + dr[None, :, None]      # (K, Pr, 1)
+        cols = c[:, None, None] + dc[None, None, :]      # (K, 1, Pc)
+        inside = (rows >= 0) & (rows < H) & (cols >= 0) & (cols < W)
+        rows = rows.clamp(0, H - 1)
+        cols = cols.clamp(0, W - 1)
+        full_idx = b_idx[:, None, None] * (H * W) + rows * W + cols  # (K, Pr, Pc)
+        full_idx = full_idx[inside]
+        values = color_src[:, None, None, :].expand(-1, rows.shape[1], cols.shape[2], -1)[inside]
+        measurement['image'].reshape(B * H * W, 3).index_put_((full_idx,), values)
+        return measurement
 
     def render(self, world, states, background_color=None, splat_radius=1, with_distortion=True):
         """
