@@ -86,9 +86,17 @@ def main():
     world = World.from_file(os.path.join(
         os.path.dirname(os.path.abspath(__file__)), '..', 'rotorpy',
         'worlds', 'double_pillar.json'))
-    # Generate surface features for the world. This adds visual features (3D position + color) on the surfaces of the world geometry.
-    world.generate_surface_features(mode='regular', spacing=0.08, descriptor_noise=0.15)  # regular grid feature generation
-    # world.generate_surface_features(mode='random', N_features_per_surface=200, descriptor_noise=0.15) # random feature generation
+    # Generate surface features for the world. Each feature is a 3D point with
+    # an RGB color plus an optional descriptor vector (e.g. SIFT/ALIKED). The
+    # camera splats using the colors and streams both colors and descriptors
+    # through its output, giving a full ground-truth training signal for VO/VIO
+    # and vision-based policies. descriptor_dim attaches synthetic descriptor
+    # vectors (L2-normalized, seed-reproducible) to every feature.
+    world.generate_surface_features(mode='regular', spacing=0.08, descriptor_noise=0.15,
+                                    descriptor_dim=128)  # 128-d SIFT-style synthetic descriptors
+    # world.generate_surface_features(mode='random', feature_density=500, descriptor_noise=0.15, descriptor_dim=128)  # density-based random splatter (features/m^2)
+    # world.generate_surface_features(mode='edge_uniform', spacing=0.05, descriptor_noise=0.15)  # features along edges, uniform spacing
+    # world.generate_surface_features(mode='edge_random', edge_density=200, descriptor_noise=0.15)  # features along edges, random
 
     # Forward-facing camera: camera +z (optical axis) aligned with body +x, with slight upward tilt.
     base_orientation = Rotation.from_euler('x', -45, degrees=True)*Rotation.from_euler('y', -90, degrees=True)*Rotation.from_euler('x', 90, degrees=True)
@@ -107,8 +115,14 @@ def main():
     # frame_rate decouples the capture rate from sim_rate; None would render
     # every simulation step. splat_radius enlarges each feature's pixel patch
     # so features are easier to see in the rendered frames.
-    # camera = PinholeCamera(intrinsics=intrinsics, extrinsics=extrinsics,
-    #                        frame_rate=25, splat_radius=3)
+    # feature_output selects which per-feature data the camera returns:
+    #   'all' (default), both RGB colors and descriptor vectors
+    #   'rgb', colors only (descriptors are None) -- for RGB/image-based learning
+    #   'descriptors', descriptors only (colors are None) -- compact VO/VIO data
+    # The rendered image always uses colors; the toggle only trims the returned
+    # arrays, which matters when many frames are collected in bulk.
+    camera = PinholeCamera(intrinsics=intrinsics, extrinsics=extrinsics,
+                           frame_rate=25, splat_radius=3, feature_output='all')
 
     # Optional visual noise effect, applied on top of the raw render by
     # measurement(). Off by default. Tuning knobs (noise_params dict):
@@ -174,7 +188,9 @@ def main():
 
     # The captured frames live in results['camera_measurements'] with keys
     # time, image (K,H,W,3 uint8), visible_mask, projected, depth, keypoints,
-    # keypoint_depths, visible_features. Save them separately from the csv.
+    # keypoint_depths, visible_features, colors (K,N,3), visible_colors,
+    # descriptors (K,N,D), visible_descriptors. Save them separately from the
+    # csv since images are far too large for it.
     sim_instance.save_to_csv("camera_demo.csv")
     sim_instance.save_camera_data("rotorpy_demo", save_pngs=True)
 
