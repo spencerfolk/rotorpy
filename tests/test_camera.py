@@ -14,18 +14,21 @@ import matplotlib.pyplot as plt
 
 
 def _block_world(blocks, bounds=None, add_features=True, feature_mode='regular',
-                 feature_spacing=0.5, N_features_per_surface=100, seed=None,
-                 descriptor_noise=0.05):
+                 feature_spacing=0.5, N_features_per_surface=None, seed=None,
+                 descriptor_noise=0.05, feature_density=50.0, edge_spacing=0.1,
+                 edge_density=50.0, descriptor_dim=None):
     """
     Build a World from a list of block dicts (extents + color).
     """
     from rotorpy.world import World
     if bounds is None:
         bounds = {'extents': [-2, 2, -2, 2, -2, 2]}
-    world_data = {'bounds': bounds, 'blocks': blocks}
-    return World(world_data, add_features=add_features, feature_mode=feature_mode,
+    return World(world_data={'bounds': bounds, 'blocks': blocks},
+                 add_features=add_features, feature_mode=feature_mode,
                  feature_spacing=feature_spacing, N_features_per_surface=N_features_per_surface,
-                 seed=seed, descriptor_noise=descriptor_noise)
+                 seed=seed, descriptor_noise=descriptor_noise,
+                 feature_density=feature_density, edge_spacing=edge_spacing,
+                 edge_density=edge_density, descriptor_dim=descriptor_dim)
 
 
 def _camera_looking_along_x(extrinsics_position=None):
@@ -58,12 +61,12 @@ def _feature_world():
                  descriptor_noise=0.1, seed=3)
 
 
-def _camera(frame_rate=None):
+def _camera(frame_rate=None, **kwargs):
     from rotorpy.sensors.camera import PinholeCamera
     return PinholeCamera(intrinsics=TINY_INTRINSICS,
                          extrinsics={'position': np.zeros(3),
                                      'orientation': np.array([0.0, 0.0, 0.0, 1.0])},
-                         frame_rate=frame_rate)
+                         frame_rate=frame_rate, **kwargs)
 
 
 def _initial_state():
@@ -100,35 +103,278 @@ def test_feature_generation_regular():
                    np.any(np.abs(f[2] - z_planes) < 1e-6))
         assert on_face, f"feature {f} does not lie on a block face"
 
-    # Descriptors match the feature count and live in [0, 1].
+    # Colors match the feature count, live in [0, 1], and no generic descriptor
+    # vectors are generated unless requested.
+    colors = world.get_feature_colors()
+    assert colors is not None, "expected feature colors to be generated"
+    assert colors.shape == features.shape
+    assert np.all(colors >= 0.0) and np.all(colors <= 1.0)
+    assert world.get_feature_descriptors() is None, \
+        "no generic descriptor vectors by default"
+
+
+def test_feature_density_random_seeded():
+    """
+    The 'random' mode splatters at a fixed areal density (features/m^2), so
+    feature count scales with object surface area (not face count), and the
+    same seed reproduces identical features + descriptors.
+    """
+    print("\nTesting density-based random surface feature generation")
+    small = {'extents': [-0.5, 0.5, -0.5, 0.5, 0.0, 0.5], 'color': [1, 0, 0]}
+    large = {'extents': [-1.0, 1.0, -1.0, 1.0, 0.0, 2.0], 'color': [1, 0, 0]}
+    density = 40.0
+    w_small = _block_world([small], feature_mode='random', feature_density=density, seed=42)
+    w_large = _block_world([large], feature_mode='random', feature_density=density, seed=42)
+
+    # Areas: small = 4 m^2 (1x1x0.5 box), large = 24 m^2 (2x2x2 box).
+    n_small = w_small.get_surface_features().shape[0]
+    n_large = w_large.get_surface_features().shape[0]
+    assert abs(n_small - density * 4) < 0.05 * density * 4, \
+        "feature count should be approximately density * surface area"
+    assert abs(n_large - density * 24) < 0.05 * density * 24, \
+        "feature count should be approximately density * surface area"
+    assert 4.0 < n_large / n_small < 10.0, \
+        "larger object must carry proportionally more features (uniform areal density)"
+
+    # Same seed -> identical features and colors.
+    w2 = _block_world([large], feature_mode='random', feature_density=density, seed=42)
+    assert np.array_equal(w_large.get_surface_features(), w2.get_surface_features())
+    assert np.array_equal(w_large.get_feature_colors(), w2.get_feature_colors())
+
+    # Features must lie on some block face.
+    xs, ys, zs = [-1.0, 1.0], [-1.0, 1.0], [0.0, 2.0]
+    for f in w_large.get_surface_features():
+        on_face = (np.any(np.abs(f[0] - xs) < 1e-6) or
+                   np.any(np.abs(f[1] - ys) < 1e-6) or
+                   np.any(np.abs(f[2] - zs) < 1e-6))
+        assert on_face, f"feature {f} does not lie on a block face"
+
+
+def test_feature_generation_edges_uniform():
+    """
+    'edge_uniform' places features along all 12 block edges at a fixed spacing
+    (endpoints included), and records an 'edge' in the metadata.
+    """
+    print("\nTesting uniform edge feature generation")
+    block = {'extents': [-1, 1, -1, 1, 0, 2], 'color': [1, 0, 0]}
+    world = _block_world([block], feature_mode='edge_uniform', edge_spacing=0.5,
+                         descriptor_noise=0.0, seed=1)
+    features = world.get_surface_features()
+    assert features is not None and features.shape[0] > 0
+
+    # Every feature lies on an edge: at least two coordinates are at extremes.
+    mins, maxs = np.array([-1, -1, 0]), np.array([1, 1, 2])
+    for f in features:
+        n_extrema = int(np.sum(np.isclose(f, mins) | np.isclose(f, maxs)))
+        assert n_extrema >= 2, f"feature {f} is not on a block edge"
+
+    # 12 edges of length 2 at spacing 0.5 -> 5 points per edge (corners shared).
+    assert features.shape[0] == 12 * 5, \
+        "expected 5 uniformly spaced points on each of the 12 edges"
+
+    # Metadata carries the edge.
+    _, metadata = world.generate_surface_features(mode='edge_uniform', edge_spacing=0.5,
+                                                  descriptor_noise=0.0, seed=1)
+    assert len(metadata) == features.shape[0]
+    assert all('edge' in m and m['block_idx'] == 0 for m in metadata)
+
+
+def test_feature_generation_edges_random():
+    """
+    'edge_random' places features along edges at a fixed linear density
+    (features per meter), deterministically for a given seed.
+    """
+    print("\nTesting random edge feature generation")
+    block = {'extents': [-1, 1, -1, 1, 0, 2], 'color': [1, 0, 0]}
+    edge_density = 25.0
+    world = _block_world([block], feature_mode='edge_random', edge_density=edge_density,
+                         descriptor_noise=0.0, seed=7)
+    features = world.get_surface_features()
+    assert features is not None and features.shape[0] > 0
+
+    # 12 edges of length 2 -> expect ~25*2 = 50 per edge, 600 total.
+    assert abs(features.shape[0] - 600) / 600 < 0.1, \
+        "feature count should be approximately edge_density * total edge length"
+
+    # Every feature lies on an edge and within the block's extents.
+    mins, maxs = np.array([-1, -1, 0]), np.array([1, 1, 2])
+    for f in features:
+        assert np.all(f >= mins) and np.all(f <= maxs), f"feature {f} out of block extents"
+        n_extrema = int(np.sum(np.isclose(f, mins) | np.isclose(f, maxs)))
+        assert n_extrema >= 2, f"feature {f} is not on a block edge"
+
+    # Same seed -> identical features.
+    w2 = _block_world([block], feature_mode='edge_random', edge_density=edge_density,
+                      descriptor_noise=0.0, seed=7)
+    assert np.array_equal(features, w2.get_surface_features())
+
+
+def test_world_features_via_config_section():
+    """
+    A 'features' section in world_data selects the generator and enables
+    feature generation without the add_features/feature_mode constructor args.
+    """
+    print("\nTesting world_data['features'] config section")
+    from rotorpy.world import World
+    world_data = {
+        'bounds': {'extents': [-2, 2, -2, 2, -2, 2]},
+        'blocks': [{'extents': [-1, 1, -1, 1, 0, 2], 'color': [0, 1, 0]}],
+        'features': {'mode': 'edge_uniform', 'edge_spacing': 0.5,
+                     'descriptor_noise': 0.0, 'seed': 2},
+    }
+    world = World(world_data)  # no add_features kwarg
+    features = world.get_surface_features()
+    assert features is not None and features.shape[0] == 12 * 5
+    assert np.allclose(world.get_feature_colors(), [0, 1, 0], atol=1e-9)
+    assert world.get_feature_descriptors() is None
+
+    # Deterministic across reloads from the same config + seed.
+    world2 = World(dict(world_data))
+    assert np.array_equal(features, world2.get_surface_features())
+
+
+def test_world_features_embedded_roundtrip(tmp_path):
+    """
+    Features embedded in world_data['features'] ('points'/'colors'/'descriptors')
+    bypass the generator and RNG entirely, and survive a to_file() -> from_file()
+    round-trip byte-for-byte.
+    """
+    print("\nTesting embedded world features round-trip")
+    from rotorpy.world import World
+
+    world_data = {
+        'bounds': {'extents': [-2, 2, -2, 2, -2, 2]},
+        'blocks': [{'extents': [0, 1, 0, 1, 0, 1], 'color': [1, 0, 0]}],
+    }
+    world = World(world_data, add_features=True, feature_mode='random',
+                  feature_density=30, descriptor_noise=0.1, seed=5,
+                  descriptor_dim=6)
+    features = world.get_surface_features()
+    colors = world.get_feature_colors()
     descriptors = world.get_feature_descriptors()
-    assert descriptors is not None, "expected feature descriptors to be generated"
-    assert descriptors.shape == features.shape
-    assert np.all(descriptors >= 0.0) and np.all(descriptors <= 1.0)
+    assert features is not None and features.shape[0] > 0
+    assert descriptors is not None and descriptors.shape[1] == 6
+
+    # Save WITH embedded features, then reload: exact match, no seed involved.
+    path = str(tmp_path / 'embedded_features.json')
+    world.to_file(path, include_features=True)
+    reloaded = World.from_file(path)
+    assert np.array_equal(reloaded.get_surface_features(), features)
+    assert np.array_equal(reloaded.get_feature_colors(), colors)
+    assert np.array_equal(reloaded.get_feature_descriptors(), descriptors)
+
+    # Saving a world generated with a seed only (no embedding) still reproduces
+    # the exact features, colors, and descriptors on reload because the seed and
+    # descriptor_dim are written.
+    path2 = str(tmp_path / 'seeded_features.json')
+    world.to_file(path2, include_features=False)
+    reloaded2 = World.from_file(path2)
+    assert np.array_equal(reloaded2.get_surface_features(), features)
+    assert np.array_equal(reloaded2.get_feature_colors(), colors)
+    assert np.array_equal(reloaded2.get_feature_descriptors(), descriptors)
+
+    # A world without any feature info carries no features (backwards compat).
+    plain = World({'bounds': world_data['bounds'], 'blocks': world_data['blocks']})
+    assert plain.get_surface_features() is None
 
 
-def test_feature_generation_random_seeded():
-    print("\nTesting seeded random surface feature generation")
-    blocks = [{'extents': [-1, 1, -1, 1, 0, 2], 'color': [1, 0, 0]}]
-    w1 = _block_world(blocks, feature_mode='random', N_features_per_surface=50, seed=42)
-    w2 = _block_world(blocks, feature_mode='random', N_features_per_surface=50, seed=42)
-    f1, f2 = w1.get_surface_features(), w2.get_surface_features()
-    d1, d2 = w1.get_feature_descriptors(), w2.get_feature_descriptors()
-    assert f1 is not None and f2 is not None
-    assert d1 is not None and d2 is not None
-    assert f1.shape[0] > 0
-    assert np.array_equal(f1, f2), "same seed should give identical features"
-    assert np.array_equal(d1, d2), "same seed should give identical descriptors"
+def test_world_features_invalid_mode():
+    """
+    An unknown feature mode must raise a clear ValueError listing valid modes.
+    """
+    print("\nTesting invalid feature mode")
+    from rotorpy.world import World
+    world_data = {
+        'bounds': {'extents': [-2, 2, -2, 2, -2, 2]},
+        'blocks': [{'extents': [-1, 1, -1, 1, 0, 2], 'color': [1, 0, 0]}],
+        'features': {'mode': 'not_a_mode'},
+    }
+    with pytest.raises(ValueError, match='not_a_mode'):
+        World(world_data)
 
 
-def test_feature_descriptors_no_jitter():
+def test_world_features_embedded_descriptors_roundtrip(tmp_path):
+    """
+    Embedded generic descriptor vectors of arbitrary dimension (e.g. 128-d SIFT)
+    round-trip through to_file()/from_file() exactly, including their type label.
+    """
+    print("\nTesting embedded generic feature descriptors round-trip")
+    from rotorpy.world import World
+
+    world_data = {
+        'bounds': {'extents': [-2, 2, -2, 2, -2, 2]},
+        'blocks': [{'extents': [0, 1, 0, 1, 0, 1], 'color': [1, 0, 0]}],
+        'features': {
+            'points': [[0.1, 0.2, 0.0], [0.3, 0.4, 0.0], [0.5, 0.6, 0.0]],
+            'colors': [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            'descriptors': [[float(i + j) for j in range(128)] for i in range(3)],
+            'descriptor_type': 'sift',
+        },
+    }
+    world = World(dict(world_data))
+    descriptors = world.get_feature_descriptors()
+    assert descriptors is not None and descriptors.shape == (3, 128)
+    assert descriptors.dtype == np.float64
+    assert np.array_equal(world.get_feature_descriptors(), np.asarray(world_data['features']['descriptors']))
+    assert world.get_feature_descriptor_type() == 'sift'
+
+    path = str(tmp_path / 'embedded_sift.json')
+    world.to_file(path, include_features=True)
+    reloaded = World.from_file(path)
+    assert np.array_equal(reloaded.get_surface_features(), world.get_surface_features())
+    assert np.array_equal(reloaded.get_feature_colors(), world.get_feature_colors())
+    assert np.array_equal(reloaded.get_feature_descriptors(), descriptors)
+    assert reloaded.get_feature_descriptor_type() == 'sift'
+
+    # A mismatched descriptor count must raise a clear error.
+    bad = dict(world_data)
+    bad['features'] = dict(world_data['features'])
+    bad['features']['descriptors'] = [[1.0]] * 4
+    with pytest.raises(ValueError, match="'descriptors' count"):
+        World(bad)
+
+
+def test_feature_descriptor_dim():
+    """
+    Setting descriptor_dim attaches one L2-normalized descriptor vector per
+    feature, deterministically for a given seed, while colors stay independent.
+    """
+    print("\nTesting synthetic descriptor_dim vectors")
+    block = {'extents': [-1, 1, -1, 1, 0, 2], 'color': [1, 0, 0]}
+    D = 8
+    world = _block_world([block], feature_mode='regular', feature_spacing=0.5,
+                         descriptor_noise=0.0, descriptor_dim=D, seed=11)
+    features = world.get_surface_features()
+    colors = world.get_feature_colors()
+    descriptors = world.get_feature_descriptors()
+    assert features is not None and features.shape[0] > 0
+    assert descriptors is not None and descriptors.shape == (features.shape[0], D)
+    assert colors.shape == features.shape, "colors remain (N, 3) RGB regardless of descriptor_dim"
+
+    # Synthetic vectors are L2-normalized to unit norm and not all identical.
+    norms = np.linalg.norm(descriptors, axis=1)
+    assert np.allclose(norms, 1.0, atol=1e-9), "descriptor vectors must be L2-normalized"
+    assert descriptors.max(axis=0).min() < descriptors.max(axis=0).max(), \
+        "descriptor vectors should vary between features"
+
+    # Same seed -> identical vectors; different seed -> different vectors.
+    world2 = _block_world([block], feature_mode='regular', feature_spacing=0.5,
+                          descriptor_noise=0.0, descriptor_dim=D, seed=11)
+    assert np.array_equal(world.get_feature_descriptors(), world2.get_feature_descriptors())
+    world3 = _block_world([block], feature_mode='regular', feature_spacing=0.5,
+                          descriptor_noise=0.0, descriptor_dim=D, seed=12)
+    assert not np.array_equal(world.get_feature_descriptors(), world3.get_feature_descriptors())
+
+
+def test_feature_colors_no_jitter():
     print("\nTesting zero descriptor noise")
     blocks = [{'extents': [-1, 1, -1, 1, 0, 2], 'color': [1, 0, 0]}]
     world = _block_world(blocks, feature_mode='regular', feature_spacing=0.5, descriptor_noise=0.0)
-    descriptors = world.get_feature_descriptors()
-    assert descriptors is not None
-    assert descriptors.shape[0] > 0
-    assert np.allclose(descriptors, np.array([1.0, 0.0, 0.0]), atol=1e-9)
+    colors = world.get_feature_colors()
+    assert colors is not None
+    assert colors.shape[0] > 0
+    assert colors.shape == world.get_surface_features().shape
+    assert np.allclose(colors, np.array([1.0, 0.0, 0.0]), atol=1e-9)
 
 
 def test_pinhole_projection():
@@ -360,17 +606,185 @@ def test_batched_camera_matches_numpy():
         assert torch.allclose(bout['visible_features'][b], torch.from_numpy(out['visible_features']).float(), atol=1e-4), f"visible_features mismatch drone {b}"
 
 
-def test_empty_world_feature_consistency():
+def test_camera_descriptor_output():
+    """
+    The camera passes generic descriptor vectors through: 'descriptors' aligns
+    with all features and 'visible_descriptors' with the visible ones.
+    """
+    print("\nTesting camera descriptor passthrough")
+    from rotorpy.sensors.camera import PinholeCamera
+
+    block = {'extents': [0.0, 1.0, 0.0, 1.0, 0.0, 1.0], 'color': [1.0, 0.0, 0.0]}
+    world = _block_world([block], feature_mode='random', feature_density=20,
+                         descriptor_noise=0.05, descriptor_dim=4, seed=2)
+    W_descriptors = world.get_feature_descriptors()
+    W_colors = world.get_feature_colors()
+    assert W_descriptors is not None and W_descriptors.shape[1] == 4
+    N = world.get_surface_features().shape[0]
+
+    cam = _camera()
+    state = {'x': np.array([0.5, 0.5, -1.0]), 'q': np.array([0.0, 0.0, 0.0, 1.0])}
+    out = cam.render(world, state)
+
+    assert out['descriptors'].shape == (N, 4)
+    assert np.array_equal(out['descriptors'], W_descriptors), \
+        "all-feature descriptors must match the world"
+    assert out['colors'].shape == (N, 3)
+    assert np.array_equal(out['colors'], W_colors), \
+        "all-feature colors must match the world"
+    M = int(out['visible_mask'].sum())
+    assert out['visible_descriptors'].shape == (M, 4)
+    assert np.array_equal(out['visible_descriptors'], W_descriptors[out['visible_mask']]), \
+        "visible descriptors must align with visible features"
+    assert out['visible_colors'].shape == (M, 3)
+    assert np.array_equal(out['visible_colors'], W_colors[out['visible_mask']]), \
+        "visible colors must align with visible features"
+
+    # measurement() exposes the same keys.
+    out_meas = cam.measurement(state, world)
+    assert set(out_meas.keys()) == set(out.keys())
+    assert np.array_equal(out_meas['descriptors'], out['descriptors'])
+    assert np.array_equal(out_meas['visible_descriptors'], out['visible_descriptors'])
+    assert np.array_equal(out_meas['colors'], out['colors'])
+    assert np.array_equal(out_meas['visible_colors'], out['visible_colors'])
+
+
+def test_batched_camera_descriptor_output():
+    """
+    BatchedPinholeCamera exposes (B, N, D) descriptors and per-drone visible
+    descriptors aligned with each drone's visible features.
+    """
+    print("\nTesting batched camera descriptor passthrough")
+    torch = pytest.importorskip("torch")
+    from rotorpy.sensors.camera import PinholeCamera, BatchedPinholeCamera
+
+    block = {'extents': [0.0, 1.0, 0.0, 1.0, 0.0, 1.0], 'color': [1.0, 0.0, 0.0]}
+    world = _block_world([block], feature_mode='random', feature_density=20,
+                         descriptor_noise=0.05, descriptor_dim=4, seed=2)
+    W_descriptors = world.get_feature_descriptors()
+    W_colors = world.get_feature_colors()
+    N = world.get_surface_features().shape[0]
+
+    cam = PinholeCamera()
+    bcam = BatchedPinholeCamera(num_drones=2)
+    states0 = {'x': np.array([0.5, 0.5, -1.0]), 'q': np.array([0.0, 0.0, 0.0, 1.0])}
+    states1 = {'x': np.array([0.25, 0.5, -1.5]), 'q': np.array([0.0, 0.0, 0.0, 1.0])}
+    out0 = cam.render(world, states0)
+
+    states = {'x': torch.tensor(np.stack([states0['x'], states1['x']])),
+              'q': torch.tensor(np.stack([states0['q'], states1['q']]))}
+    bout = bcam.render(world, states)
+
+    assert tuple(bout['descriptors'].shape) == (2, N, 4)
+    assert tuple(bout['colors'].shape) == (2, N, 3)
+    for b in range(2):
+        vis = bout['visible_mask'][b]
+        assert bout['visible_descriptors'][b].shape[0] == int(vis.sum())
+        assert torch.allclose(bout['visible_descriptors'][b],
+                              torch.tensor(W_descriptors, dtype=torch.float32)[vis], atol=1e-6), \
+            "per-drone visible descriptors must align with visible features"
+        assert torch.allclose(bout['visible_colors'][b],
+                              torch.tensor(W_colors, dtype=torch.float32)[vis], atol=1e-6), \
+            "per-drone visible colors must align with visible features"
+    assert torch.allclose(bout['descriptors'][0], torch.from_numpy(out0['descriptors']).float(),
+                          atol=1e-6), "batched all-feature descriptors must match the numpy camera"
+    assert torch.allclose(bout['visible_descriptors'][0],
+                          torch.from_numpy(out0['visible_descriptors']).float(), atol=1e-6)
+    assert torch.allclose(bout['colors'][0], torch.from_numpy(out0['colors']).float(),
+                          atol=1e-6), "batched all-feature colors must match the numpy camera"
+    assert torch.allclose(bout['visible_colors'][0],
+                          torch.from_numpy(out0['visible_colors']).float(), atol=1e-6)
+
+
+def test_camera_feature_output_modes():
+    """
+    feature_output controls which per-feature data a camera returns: 'all'
+    gives colors + descriptors, 'rgb' drops descriptors, 'descriptors' drops
+    colors. The rendered image is identical across modes, and the setting can
+    be overridden per call.
+    """
+    print("\nTesting camera feature_output modes")
+    from rotorpy.sensors.camera import PinholeCamera, BatchedPinholeCamera
+
+    block = {'extents': [0.0, 1.0, 0.0, 1.0, 0.0, 1.0], 'color': [1.0, 0.0, 0.0]}
+    world = _block_world([block], feature_mode='random', feature_density=20,
+                         descriptor_noise=0.05, descriptor_dim=6, seed=2)
+    N = world.get_surface_features().shape[0]
+    W_descriptors = world.get_feature_descriptors()
+    W_colors = world.get_feature_colors()
+    state = {'x': np.array([0.5, 0.5, -1.0]), 'q': np.array([0.0, 0.0, 0.0, 1.0])}
+
+    out_all = _camera().render(world, state)                      # default 'all'
+    out_rgb = _camera(feature_output='rgb').render(world, state)
+    out_desc = _camera(feature_output='descriptors').render(world, state)
+
+    # 'all' returns both, aligned with the world's data.
+    assert out_all['colors'].shape == (N, 3)
+    assert out_all['descriptors'].shape == (N, 6)
+    assert np.array_equal(out_all['colors'], W_colors)
+    assert np.array_equal(out_all['descriptors'], W_descriptors)
+    M = int(out_all['visible_mask'].sum())
+    assert out_all['visible_colors'].shape == (M, 3)
+    assert out_all['visible_descriptors'].shape == (M, 6)
+
+    # 'rgb' keeps colors, drops descriptors.
+    assert out_rgb['colors'] is not None and out_rgb['colors'].shape == (N, 3)
+    assert np.array_equal(out_rgb['colors'], out_all['colors'])
+    assert out_rgb['visible_colors'] is not None
+    assert out_rgb['descriptors'] is None
+    assert out_rgb['visible_descriptors'] is None
+
+    # 'descriptors' keeps descriptors, drops colors.
+    assert out_desc['descriptors'] is not None and out_desc['descriptors'].shape == (N, 6)
+    assert np.array_equal(out_desc['descriptors'], out_all['descriptors'])
+    assert out_desc['visible_descriptors'] is not None
+    assert out_desc['colors'] is None
+    assert out_desc['visible_colors'] is None
+
+    # The rendered image always uses colors, so it is identical across modes.
+    assert np.array_equal(out_all['image'], out_rgb['image'])
+    assert np.array_equal(out_all['image'], out_desc['image'])
+    assert np.allclose(out_all['keypoints'], out_desc['keypoints'])
+
+    # measurement() forwards the per-call override.
+    assert _camera(feature_output='rgb').render(world, state, feature_output='all')['descriptors'] is not None
+    assert _camera().render(world, state, feature_output='descriptors')['colors'] is None
+    assert _camera(feature_output='descriptors').measurement(state, world, feature_output='rgb')['descriptors'] is None
+
+    with pytest.raises(ValueError):
+        _camera().render(world, state, feature_output='nope')
+    with pytest.raises(ValueError):
+        _camera(feature_output='nope')
+
+    # Batched camera honours the same modes with (B, N, 3) colors.
+    torch = pytest.importorskip("torch")
+    bcam_all = BatchedPinholeCamera(num_drones=1)
+    bcam_rgb = BatchedPinholeCamera(num_drones=1, feature_output='rgb')
+    states = {'x': torch.tensor(state['x']).unsqueeze(0),
+              'q': torch.tensor(state['q']).unsqueeze(0)}
+    bout = bcam_rgb.render(world, states)
+    assert bout['colors'] is not None and tuple(bout['colors'].shape) == (1, N, 3)
+    assert bout['visible_colors'] is not None and all(vc is not None for vc in bout['visible_colors'])
+    assert bout['descriptors'] is None
+    assert all(vd is None for vd in bout['visible_descriptors'])
+    bout2 = bcam_rgb.render(world, states, feature_output='descriptors')
+    assert bout2['colors'] is None
+    assert bout2['descriptors'] is not None and tuple(bout2['descriptors'].shape) == (1, N, 6)
+    assert torch.allclose(bcam_all.render(world, states)['colors'][0],
+                          torch.from_numpy(W_colors).float(), atol=1e-6)
+    with pytest.raises(ValueError):
+        bcam_all.render(world, states, feature_output='nope')
     print("\nTesting empty world feature consistency")
     from rotorpy.world import World
 
     world = World.empty(extents=[-2, 2, -2, 2, -2, 2], add_features=True)
     features = world.get_surface_features()
-    descriptors = world.get_feature_descriptors()
+    colors = world.get_feature_colors()
     assert features is not None, "empty world should still return a (0, 3) feature array"
     assert features.shape == (0, 3)
-    assert descriptors is not None, "empty world should still return a (0, 3) descriptor array"
-    assert descriptors.shape == (0, 3)
+    assert colors is not None, "empty world should still return a (0, 3) color array"
+    assert colors.shape == (0, 3)
+    assert world.get_feature_descriptors() is None, "no descriptor vectors by default"
 
     world_no_features = World.empty(extents=[-2, 2, -2, 2, -2, 2], add_features=False)
     assert world_no_features.get_surface_features() is None
@@ -817,10 +1231,78 @@ def test_simulate_camera_frame_decimation():
     assert cm['projected'].shape == (K, N, 2)
     assert cm['depth'].shape == (K, N)
     assert len(cm['keypoints']) == len(cm['keypoint_depths']) == len(cm['visible_features']) == K
+    assert cm['descriptors'] is None, "this world has no descriptor vectors"
+    assert cm['visible_descriptors'] is None
+    assert cm['colors'].shape == (K, N, 3), "colors always stack when present"
+    assert len(cm['visible_colors']) == K
 
     # No camera -> None.
     (_, _, _, _, _, _, _, _, _, cm_none) = simulate(world, **common)
     assert cm_none is None
+
+
+def test_simulate_camera_descriptor_passthrough():
+    """
+    Descriptor vectors survive the full simulate() -> merge pipeline: stacked
+    (K, N, D) 'descriptors' plus per-frame visible descriptors aligned with the
+    keypoints.
+    """
+    print("\nTesting simulate() descriptor passthrough")
+    from rotorpy.simulate import simulate
+    from rotorpy.vehicles.multirotor import Multirotor
+    from rotorpy.vehicles.crazyflie_params import quad_params
+    from rotorpy.controllers.quadrotor_control import SE3Control
+    from rotorpy.trajectories.hover_traj import HoverTraj
+    from rotorpy.wind.default_winds import NoWind
+    from rotorpy.sensors.imu import Imu
+    from rotorpy.sensors.external_mocap import MotionCapture
+    from rotorpy.estimators.nullestimator import NullEstimator
+
+    block = {'extents': [0.0, 1.0, 0.0, 1.0, 0.0, 1.0], 'color': [1.0, 0.0, 0.0]}
+    world = _block_world([block], feature_mode='random', feature_density=30,
+                         descriptor_noise=0.05, descriptor_dim=5, seed=4)
+    sim_rate = 100
+    common = dict(initial_state=_initial_state(),
+                  vehicle=Multirotor(quad_params),
+                  controller=SE3Control(quad_params),
+                  trajectory=HoverTraj(x0=[0.5, 0.5, -1.0]),
+                  wind_profile=NoWind(),
+                  imu=Imu(sampling_rate=sim_rate),
+                  mocap=MotionCapture(sampling_rate=sim_rate),
+                  estimator=NullEstimator(),
+                  t_final=0.15,
+                  t_step=1/sim_rate,
+                  safety_margin=0.25,
+                  use_mocap=False)
+
+    cam = _camera(frame_rate=20)
+    (_, _, _, _, _, _, _, _, _, cm) = simulate(world, camera=cam, **common)
+
+    K = cm['time'].shape[0]
+    N = world.get_surface_features().shape[0]
+    assert cm['descriptors'].shape == (K, N, 5), "descriptors must stack to (K, N, D)"
+    assert cm['colors'].shape == (K, N, 3), "colors must stack to (K, N, 3)"
+    for k, vd in enumerate(cm['visible_descriptors']):
+        assert vd.shape[0] == len(cm['keypoints'][k]), \
+            "visible descriptors must align with per-frame keypoints"
+    assert np.array_equal(cm['descriptors'][0], world.get_feature_descriptors()), \
+        "stacked descriptors must match the world descriptors"
+
+    # 'descriptors' mode drops the colors from the merged output but keeps the
+    # descriptors; 'rgb' mode does the reverse. Same world, so N/D match.
+    (_, _, _, _, _, _, _, _, _, cm_desc_only) = simulate(
+        world, camera=_camera(frame_rate=20, feature_output='descriptors'), **common)
+    assert cm_desc_only['colors'] is None
+    assert cm_desc_only['visible_colors'] is None
+    assert cm_desc_only['descriptors'].shape == (K, N, 5)
+    assert np.array_equal(cm_desc_only['descriptors'], cm['descriptors'])
+
+    (_, _, _, _, _, _, _, _, _, cm_rgb_only) = simulate(
+        world, camera=_camera(frame_rate=20, feature_output='rgb'), **common)
+    assert cm_rgb_only['descriptors'] is None
+    assert cm_rgb_only['visible_descriptors'] is None
+    assert cm_rgb_only['colors'].shape == (K, N, 3)
+    assert np.array_equal(cm_rgb_only['colors'], cm['colors'])
 
 
 def test_environment_camera_integration(tmp_path):
@@ -858,7 +1340,9 @@ def test_environment_camera_integration(tmp_path):
     cm = results['camera_measurements']
     assert cm is not None and cm['time'].shape[0] > 0
     assert set(cm.keys()) == {'time', 'image', 'visible_mask', 'projected', 'depth',
-                              'keypoints', 'keypoint_depths', 'visible_features'}
+                          'colors', 'visible_colors',
+                          'descriptors', 'visible_descriptors',
+                          'keypoints', 'keypoint_depths', 'visible_features'}
 
     # The camera figure must show min(4, K) sampled frames + the visibility plot.
     fig = plt.figure('Camera Measurements vs Time')
@@ -889,6 +1373,8 @@ def test_environment_camera_integration(tmp_path):
     loaded = np.load(npz_path, allow_pickle=True)
     assert np.array_equal(loaded['image'], cm['image'])
     assert np.allclose(loaded['time'], cm['time'])
+    assert np.array_equal(loaded['colors'], cm['colors']), "colors must be saved to npz"
+    assert len(loaded['visible_colors']) == cm['time'].shape[0]
     assert len(list(loaded['keypoints'])) == cm['time'].shape[0]
     frames_dir = npz_path[:-len('.npz')] + '_frames'
     n_pngs = len([f for f in os.listdir(frames_dir) if f.endswith('.png')])
