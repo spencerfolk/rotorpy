@@ -5,7 +5,7 @@ Split into two marker groups:
   - compilation - fast: syntax check + import resolution. Catches broken
                   imports and parse errors without running the rest of the
                   script.
-  - full_run    - slow, best-effort: actually executes each example.
+  - run_examples - slow, best-effort: actually executes each example.
                   Catches runtime issues that only show up during execution.
                   Run periodically (see .github/workflows) rather than on
                   every push.
@@ -139,7 +139,7 @@ def test_example_imports():
 # Tier 3: full run (slow, best-effort)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.full_run
+@pytest.mark.run_examples
 @pytest.mark.parametrize("script_path", example_scripts, ids=os.path.basename)
 def test_example_script_runs(script_path):
     """

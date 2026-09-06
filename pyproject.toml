@@ -97,9 +97,9 @@ include = ["rotorpy", "rotorpy.*"]
 [tool.setuptools]
 
 [tool.pytest.ini_options]
-addopts = '-m "not full_run"'
+addopts = '-m "not run_examples"'
 markers = [
-    "full_run: full end-to-end execution of just the examples in ./examples/",
+    "run_examples: full end-to-end execution of just the examples in ./examples/",
 ]
 filterwarnings = [
     "ignore:Matplotlib is currently using agg.*:UserWarning",
