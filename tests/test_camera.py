@@ -1175,6 +1175,162 @@ def test_batched_measurement_noise_injection():
         "noise_params=None should disable injection for the call"
 
 
+def test_batched_camera_per_drone_params():
+    """
+    Every camera parameter can be set per drone. Each drone's render must match
+    a single-camera PinholeCamera configured with the same intrinsics,
+    extrinsics, and near plane. Per-drone noise_params are honored by
+    measurement(), and mixed resolutions across drones are rejected.
+    """
+    print("\nTesting batched camera per-drone params")
+    torch = pytest.importorskip("torch")
+    from rotorpy.sensors.camera import PinholeCamera, BatchedPinholeCamera
+    from scipy.spatial.transform import Rotation
+
+    world = _feature_world()
+
+    intr0 = dict(TINY_INTRINSICS)
+    intr1 = dict(TINY_INTRINSICS)
+    intr1['fx'] = 200.0
+    intr1['fy'] = 160.0
+    intr1['cx'] = 20.0
+    intr1['cy'] = 30.0
+    intr1['dist_coeffs'] = np.array([0.0, 0.0, -0.1, 0.05, 0.0])
+
+    ext0 = {'position': np.zeros(3), 'orientation': np.array([0.0, 0.0, 0.0, 1.0])}
+    ext1 = {'position': np.array([0.1, 0.2, -0.4]),
+            'orientation': Rotation.from_euler('z', 30, degrees=True).as_quat()}
+
+    bcam = BatchedPinholeCamera(num_drones=2, intrinsics=[intr0, intr1], extrinsics=[ext0, ext1],
+                                near_plane=[0.05, 10.0])
+    states = {'x': torch.tensor([[0.5, 0.5, -1.0], [0.25, 0.5, -1.5]], dtype=torch.float32),
+              'q': torch.tensor([[0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 0.0, 1.0]], dtype=torch.float32)}
+    bout = bcam.render(world, states)
+
+    for b, intr, ext, near in [(0, intr0, ext0, 0.05), (1, intr1, ext1, 10.0)]:
+        cam = PinholeCamera(intrinsics=intr, extrinsics=ext, near_plane=near)
+        out = cam.render(world, {'x': states['x'][b].numpy(), 'q': states['q'][b].numpy()})
+        assert torch.allclose(bout['image'][b], torch.from_numpy(out['image']), atol=1e-4), \
+            "image mismatch drone {}".format(b)
+        assert torch.equal(bout['visible_mask'][b], torch.from_numpy(out['visible_mask'])), \
+            "visible_mask mismatch drone {}".format(b)
+        assert torch.allclose(bout['keypoints'][b], torch.from_numpy(out['keypoints']).float(), atol=1e-4), \
+            "keypoints mismatch drone {}".format(b)
+
+    # The per-drone near plane is honored: drone 1 (near plane 10) sees
+    # nothing while drone 0 (near plane 0.05) does.
+    assert bout['visible_mask'][0].any()
+    assert not bout['visible_mask'][1].any()
+
+    # Per-drone noise_params are honored by measurement().
+    bnoisy = BatchedPinholeCamera(num_drones=2, intrinsics=TINY_INTRINSICS,
+                                  noise_params=[{'feature_rate': 50, 'splat_radius': 2, 'seed': 7}, None])
+    clean = bnoisy.render(world, states)
+    noisy = bnoisy.measurement(world, states)
+    assert not torch.equal(noisy['image'][0], clean['image'][0]), "drone 0 should get injected noise"
+    assert torch.equal(noisy['image'][1], clean['image'][1]), "drone 1 (noise_params=None) must stay clean"
+    assert torch.equal(clean['visible_mask'], noisy['visible_mask']), "noise must not touch geometry"
+
+    # Mixed resolutions across drones are rejected.
+    bad = dict(TINY_INTRINSICS)
+    bad['width'] = 32
+    with pytest.raises(ValueError):
+        BatchedPinholeCamera(num_drones=2, intrinsics=[intr0, bad])
+
+
+def test_batched_camera_per_drone_worlds():
+    """
+    Passing a list/tuple of Worlds renders each drone in its own environment
+    (None = empty world): the all-feature outputs become per-drone lists and
+    each drone matches a single-camera render of its own world. A list of
+    identical worlds must agree exactly with the shared-world path, and a
+    wrong-length list is rejected.
+    """
+    print("\nTesting batched camera per-drone worlds")
+    torch = pytest.importorskip("torch")
+    from rotorpy.sensors.camera import PinholeCamera, BatchedPinholeCamera
+
+    world = _feature_world()
+    other = _block_world([{'extents': [0.0, 2.0, 0.0, 2.0, 0.0, 1.0], 'color': [0.0, 0.0, 1.0]}],
+                         feature_mode='regular', feature_spacing=0.5, seed=4)
+    assert other.get_surface_features().shape[0] != world.get_surface_features().shape[0], \
+        "sanity: worlds should have different feature counts"
+
+    bcam = BatchedPinholeCamera(num_drones=3, intrinsics=TINY_INTRINSICS)
+    states = {'x': torch.tensor([[0.5, 0.5, -1.0]] * 3, dtype=torch.float32),
+              'q': torch.tensor([[0.0, 0.0, 0.0, 1.0]] * 3, dtype=torch.float32)}
+    bout = bcam.render([world, other, None], states)
+
+    cam = PinholeCamera(intrinsics=TINY_INTRINSICS)
+    for b, w in enumerate([world, other]):
+        out = cam.render(w, {'x': states['x'][b].numpy(), 'q': states['q'][b].numpy()})
+        assert torch.allclose(bout['image'][b], torch.from_numpy(out['image']), atol=1e-4), \
+            "image mismatch drone {}".format(b)
+        assert torch.equal(bout['visible_mask'][b], torch.from_numpy(out['visible_mask'])), \
+            "visible_mask mismatch drone {}".format(b)
+        assert torch.allclose(bout['keypoints'][b], torch.from_numpy(out['keypoints']).float(), atol=1e-4), \
+            "keypoints mismatch drone {}".format(b)
+
+    # None gives an empty world: no features, uniform background.
+    assert bout['visible_mask'][2].shape == (0,)
+    assert bout['keypoints'][2].shape == (0, 2)
+    assert torch.all(bout['image'][2] == bout['image'][2][0, 0, 0]), \
+        "empty world frame should be uniform background"
+
+    # Identical-worlds list must agree exactly with the shared-world path.
+    bcam2 = BatchedPinholeCamera(num_drones=2, intrinsics=TINY_INTRINSICS)
+    states2 = {'x': torch.tensor([[0.5, 0.5, -1.0], [0.25, 0.5, -1.5]], dtype=torch.float32),
+               'q': torch.tensor([[0.0, 0.0, 0.0, 1.0]] * 2, dtype=torch.float32)}
+    shared = bcam2.render(world, states2)
+    multi = bcam2.render([world, world], states2)
+    assert torch.equal(shared['image'], multi['image'])
+    for b in range(2):
+        assert torch.equal(shared['visible_mask'][b], multi['visible_mask'][b])
+
+    # Wrong-length worlds lists are rejected.
+    with pytest.raises(ValueError):
+        bcam.render([world], states)
+
+
+def test_randomize_camera_params():
+    """
+    randomize_camera_params() returns length-num_drones per-drone parameter
+    lists that preserve the image resolution, respect noise_fraction, and are
+    reproducible for a given seed.
+    """
+    print("\nTesting randomize_camera_params()")
+    from rotorpy.sensors.camera import randomize_camera_params
+
+    args = dict(intrinsics=dict(TINY_INTRINSICS), intrinsics_scale=0.2,
+                principal_point_scale=0.1, dist_coeffs_scale=0.02,
+                extrinsics_translation=0.1, extrinsics_rotation=0.3)
+
+    intrinsics_list, extrinsics_list, noise_params_list = \
+        randomize_camera_params(num_drones=4, seed=42, **args)
+    assert len(intrinsics_list) == len(extrinsics_list) == len(noise_params_list) == 4
+    assert all(np.isclose(np.asarray(p['width']), 64) and np.isclose(np.asarray(p['height']), 48)
+               for p in intrinsics_list), "image resolution must be shared/preserved"
+    assert all(n is None for n in noise_params_list)
+
+    # noise_fraction=1 gives every drone a noise dict with in-range feature_rate.
+    _, _, noisy = randomize_camera_params(num_drones=3, noise_fraction=1.0, seed=7, **args)
+    assert all(n is not None and 5.0 <= n['feature_rate'] <= 40.0 for n in noisy)
+
+    # Same seed -> same samples.
+    a = randomize_camera_params(num_drones=2, seed=1, **args)
+    b = randomize_camera_params(num_drones=2, seed=1, **args)
+    assert [tuple(np.ravel(p['position'])) for p in a[1]] == \
+           [tuple(np.ravel(p['position'])) for p in b[1]]
+
+    # Invalid arguments are rejected.
+    with pytest.raises(ValueError):
+        randomize_camera_params(seed=0, intrinsics_scale=-1.0)
+    with pytest.raises(ValueError):
+        randomize_camera_params(seed=0, noise_fraction=1.5)
+    with pytest.raises(ValueError):
+        randomize_camera_params(seed=0, feature_rate_range=(2.0, 2.0))
+
+
 def test_simulate_camera_frame_decimation():
     """
     Frames must be captured at t=0 and then whenever the camera's frame_rate

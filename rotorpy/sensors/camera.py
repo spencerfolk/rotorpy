@@ -629,51 +629,253 @@ class PinholeCamera:
         }
 
 
+def _per_drone_list(value, num_drones, name):
+    """
+    Normalize a parameter into a list of exactly num_drones entries.
+
+    A dict or scalar is broadcast to every drone; a sequence (list, tuple, or
+    array) must already have length num_drones, which is the maximum batch size
+    of the batched camera.
+
+    Inputs:
+        value, a shared dict/scalar or a per-drone sequence
+        num_drones, the maximum batch size
+        name, parameter name for error messages
+
+    Outputs:
+        params, list of length num_drones
+    """
+    if isinstance(value, dict) or isinstance(value, (int, float, np.integer, np.floating)):
+        return [value for _ in range(num_drones)]
+    if isinstance(value, (list, tuple, np.ndarray)):
+        seq = list(value)
+        if len(seq) != num_drones:
+            raise ValueError("{} must be shared (scalar/dict) or have length num_drones={}, got {}".format(
+                name, num_drones, len(seq)))
+        return seq
+    raise ValueError("{} must be a scalar/dict (shared) or a sequence of {} entries, got {}".format(
+        name, num_drones, type(value).__name__))
+
+
+def _coerce_noise_params_list(noise_params, num_drones, default_splat_radius):
+    """
+    Normalize noise_params into a per-drone list of coerced dicts (or None).
+
+    Inputs:
+        noise_params, None, a single dict (broadcast), or a sequence of
+            num_drones dicts or None entries (None disables the effect for that
+            drone)
+        num_drones, the maximum batch size
+        default_splat_radius, a shared scalar or per-drone sequence used when an
+            entry omits 'splat_radius'
+
+    Outputs:
+        params, list of length num_drones of coerced dicts (see
+            _coerce_noise_params) or None
+    """
+    if noise_params is None:
+        return [None] * num_drones
+
+    if isinstance(noise_params, dict):
+        seq = [noise_params] * num_drones
+    elif isinstance(noise_params, (list, tuple, np.ndarray)):
+        seq = list(noise_params)
+        if len(seq) != num_drones:
+            raise ValueError("noise_params sequence must have length num_drones={}, got {}".format(
+                num_drones, len(seq)))
+    else:
+        raise ValueError("noise_params must be a dict, a sequence of dicts/None, or None, got {}".format(
+            type(noise_params).__name__))
+
+    default_radii = _per_drone_list(default_splat_radius, num_drones, 'splat_radius')
+    out = []
+    for b, entry in enumerate(seq):
+        if entry is None:
+            out.append(None)
+        else:
+            out.append(_coerce_noise_params(entry, default_splat_radius=float(default_radii[b])))
+    return out
+
+
+def randomize_camera_params(num_drones=1, intrinsics=None, extrinsics=None,
+                            intrinsics_scale=0.1, principal_point_scale=0.05,
+                            dist_coeffs_scale=0.0, extrinsics_translation=0.1,
+                            extrinsics_rotation=0.2, noise_fraction=0.0,
+                            feature_rate_range=(5.0, 40.0), seed=None):
+    """
+    Sample a batch of per-drone camera parameters for domain randomization.
+
+    Draws num_drones perturbed intrinsics/extrinsics around the given bases and
+    optionally turns on the measurement() visual noise effect for a fraction of
+    the drones. Intended to feed the per-drone sequences accepted by
+    BatchedPinholeCamera; the image resolution is preserved so the whole batch
+    is valid together.
+
+    Inputs:
+        num_drones, number of per-drone parameter sets to sample
+        intrinsics, base intrinsics dict (defaults to a 640x480 pinhole camera)
+        extrinsics, base extrinsics dict (defaults to identity body-to-camera)
+        intrinsics_scale, relative standard deviation of the log-normal scale
+            applied to the focal lengths
+        principal_point_scale, principal point jitter as a fraction of the image
+            width/height (standard deviation of the additive offset)
+        dist_coeffs_scale, standard deviation of the zero-mean jitter added to
+            each distortion coefficient
+        extrinsics_translation, standard deviation (m) of the additive position
+            jitter, per axis
+        extrinsics_rotation, standard deviation (rad) of the random small
+            rotation applied to the extrinsics orientation
+        noise_fraction, fraction of drones that receive a synthesized
+            measurement-noise params dict (the rest get None)
+        feature_rate_range, (lo, hi) uniform range for the sampled feature_rate
+            of noisy drones
+        seed, optional int making the whole sampling reproducible
+
+    Outputs:
+        intrinsics_list, extrinsics_list, noise_params_list, three lists of
+            length num_drones of intrinsics dicts, extrinsics dicts, and
+            noise params dicts (or None), suitable for the corresponding
+            BatchedPinholeCamera constructor arguments
+    """
+    if intrinsics is None:
+        intrinsics = {'fx': 500.0, 'fy': 500.0, 'width': 640, 'height': 480, 'cx': 320.0, 'cy': 240.0,
+                      'dist_coeffs': np.array([0.0, 0.0, 0.0, 0.0, 0.0])}  # [k1, k2, p1, p2, k3]
+    if extrinsics is None:
+        extrinsics = {'position': np.array([0.0, 0.0, 0.0]), 'orientation': np.array([0.0, 0.0, 0.0, 1.0])}
+
+    for name, value in (('intrinsics_scale', intrinsics_scale),
+                        ('principal_point_scale', principal_point_scale),
+                        ('dist_coeffs_scale', dist_coeffs_scale),
+                        ('extrinsics_translation', extrinsics_translation),
+                        ('extrinsics_rotation', extrinsics_rotation)):
+        if value < 0.0:
+            raise ValueError("{} must be >= 0, got {}".format(name, value))
+    if not 0.0 <= noise_fraction <= 1.0:
+        raise ValueError("noise_fraction must be in [0, 1], got {}".format(noise_fraction))
+    feature_rate_range = tuple(feature_rate_range)
+    if len(feature_rate_range) != 2 or feature_rate_range[1] <= feature_rate_range[0]:
+        raise ValueError("feature_rate_range must be a (lo, hi) pair with hi > lo, got {}".format(feature_rate_range))
+
+    rng = np.random.default_rng(seed)
+    width = int(intrinsics['width'])
+    height = int(intrinsics['height'])
+    base_fx = float(intrinsics['fx'])
+    base_fy = float(intrinsics['fy'])
+    base_cx = float(intrinsics['cx'])
+    base_cy = float(intrinsics['cy'])
+    base_dist = np.asarray(intrinsics['dist_coeffs'], dtype=np.float64)
+    base_pos = np.asarray(extrinsics['position'], dtype=np.float64)
+    base_R = Rotation.from_quat(np.asarray(extrinsics['orientation'], dtype=np.float64))
+
+    intrinsics_list, extrinsics_list, noise_params_list = [], [], []
+    for _ in range(num_drones):
+        fx = base_fx * (1.0 + rng.normal(0.0, intrinsics_scale))
+        fy = base_fy * (1.0 + rng.normal(0.0, intrinsics_scale))
+        cx = base_cx + width * rng.normal(0.0, principal_point_scale)
+        cy = base_cy + height * rng.normal(0.0, principal_point_scale)
+        dist = base_dist + rng.normal(0.0, dist_coeffs_scale, size=5)
+        intrinsics_list.append({'fx': fx, 'fy': fy, 'width': width, 'height': height,
+                                'cx': cx, 'cy': cy, 'dist_coeffs': dist})
+
+        position = base_pos + rng.normal(0.0, extrinsics_translation, size=3)
+        axis = rng.normal(size=3)
+        axis_norm = np.linalg.norm(axis)
+        if axis_norm < 1e-12:
+            axis = np.array([1.0, 0.0, 0.0])
+        else:
+            axis = axis / axis_norm
+        theta = abs(float(rng.normal(0.0, extrinsics_rotation)))
+        orientation = (Rotation.from_rotvec(axis * theta) * base_R).as_quat()
+        extrinsics_list.append({'position': position, 'orientation': orientation})
+
+        if rng.random() < noise_fraction:
+            noise_params_list.append({'feature_rate': float(rng.uniform(feature_rate_range[0], feature_rate_range[1])),
+                                      'splat_radius': int(rng.integers(1, 4)),
+                                      'intensity': float(rng.uniform(0.5, 1.0)),
+                                      'seed': int(rng.integers(0, 2**31 - 1))})
+        else:
+            noise_params_list.append(None)
+
+    return intrinsics_list, extrinsics_list, noise_params_list
+
+
 class BatchedPinholeCamera:
     """
-    Torch-parallelized version of PinholeCamera that renders the same world
-    for a batch of drones simultaneously.
+    Torch-parallelized version of PinholeCamera that renders a batch of
+    drones simultaneously.
+
+    Camera parameters can be given either as a single shared value (broadcast
+    to every drone) or per drone, which is how domain randomization is applied:
+    each drone in a batch can have its own intrinsics (focal lengths, principal
+    point, distortion), extrinsics (mount position/orientation), near_plane,
+    splat_radius, and noise_params. The image resolution (width/height) must be
+    shared across the batch so the rendered images stay a single (B, H, W, 3)
+    tensor.
+
+    Each drone may also observe its own environment: pass a single World to
+    render()/measurement() for a shared world (the all-feature outputs stay
+    stacked (B, N, ...) tensors), or a list/tuple of length B of Worlds (None
+    gives a drone an empty world) for per-drone environments. Because the
+    per-drone feature counts N can differ, with per-drone worlds the all-feature
+    outputs (visible_mask, depth, colors, descriptors) are returned as lists of
+    length B; keypoints/visible_* were already per-drone lists.
 
     Parameters:
         num_drones, number of drones in the batch (the actual batch size B
             passed to render() may be <= num_drones)
-        intrinsics, dict of camera intrinsics, see PinholeCamera
-        extrinsics, dict of camera extrinsics, see PinholeCamera
-        near_plane, minimum camera-frame z for a feature to be rendered, m
+        intrinsics, dict of camera intrinsics (shared) or a sequence of
+            num_drones dicts (per drone); all entries must share width/height.
+        extrinsics, dict of camera extrinsics (shared) or a sequence of
+            num_drones dicts (per drone), see PinholeCamera
+        near_plane, scalar (shared) or per-drone sequence of minimum
+            camera-frame z for a feature to be rendered, m
         device, torch device string, e.g. 'cpu' or 'cuda'
-        noise_params, optional dict enabling the measurement() visual noise
-            effect, see PinholeCamera.__init__ for the tuning knobs.
+        noise_params, None, a single dict (shared), or a per-drone sequence of
+            dict/None (None disables the effect for that drone), enabling the
+            measurement() visual noise effect, see PinholeCamera.__init__ for
+            the tuning knobs.
         feature_output, which per-feature data measurement()/render() return:
             'all' (default) for both RGB colors and descriptor vectors, 'rgb'
             for colors only, or 'descriptors' for descriptor vectors only. See
             PinholeCamera.__init__ for details.
+        splat_radius, scalar (shared) or per-drone sequence of default splat
+            radii, pixels; can be overridden per call.
     """
     def __init__(self, num_drones, intrinsics=None, extrinsics=None, near_plane=0.05, device='cpu',
-                 noise_params=None, feature_output='all'):
+                 noise_params=None, feature_output='all', splat_radius=1):
         """
         Parameters:
             num_drones, number of drones in the batch
-            intrinsics, dict of camera intrinsics, see PinholeCamera
-            extrinsics, dict of camera extrinsics, see PinholeCamera
-            near_plane, minimum camera-frame z for a feature to be rendered, m
+            intrinsics, dict of camera intrinsics (shared) or a sequence of
+                num_drones dicts (per drone); all entries must agree on
+                width/height.
+            extrinsics, dict of camera extrinsics (shared) or a sequence of
+                num_drones dicts (per drone), see PinholeCamera
+            near_plane, scalar (shared) or per-drone sequence of minimum
+                camera-frame z for a feature to be rendered, m
             device, torch device string
-            noise_params, None (default) for no noise, or a dict of tuning
-                knobs for the measurement() visual noise effect, which randomly
+            noise_params, None, a single dict (shared), or a per-drone sequence
+                of dict/None (None turns the effect off for that drone): the
+                measurement() visual noise effect tuning knobs, which randomly
                 injects synthetic features onto each frame independently per
                 drone. See PinholeCamera.__init__ for the knob descriptions.
             feature_output, which per-feature data render()/measurement() put
                 in their output dicts ('all', 'rgb', or 'descriptors'),
                 suppressing colors or descriptors to save memory. Same
                 semantics and per-call override as PinholeCamera.__init__.
+            splat_radius, scalar (shared) or per-drone sequence of default
+                splat radii, pixels; can be overridden per render() call.
         """
         if torch is None:
             raise ImportError("torch required for BatchedPinholeCamera")
+        if num_drones < 1:
+            raise ValueError("num_drones must be >= 1, got {}".format(num_drones))
 
         self.num_drones = num_drones
         self.device = torch.device(device)
-        self.near_plane = near_plane
-        self.noise_params = _coerce_noise_params(noise_params, default_splat_radius=1)
         self.feature_output = _resolve_feature_output(feature_output, 'all')
+        self.intrinsics = intrinsics
+        self.extrinsics = extrinsics
 
         if intrinsics is None:
             intrinsics = {'fx': 500.0, 'fy': 500.0, 'width': 640, 'height': 480, 'cx': 320.0, 'cy': 240.0,
@@ -681,24 +883,59 @@ class BatchedPinholeCamera:
         if extrinsics is None:
             extrinsics = {'position': np.array([0.0, 0.0, 0.0]), 'orientation': np.array([0.0, 0.0, 0.0, 1.0])}
 
-        self.intrinsics = intrinsics
-        self.extrinsics = extrinsics
+        # Per-drone intrinsics. Resolution must be shared so the batch images
+        # stay a single (B, H, W, 3) tensor; focal lengths, principal point,
+        # and distortion may vary per drone for domain randomization.
+        fxs, fys, cxs, cys, widths, heights, dists = [], [], [], [], [], [], []
+        for entry in _per_drone_list(intrinsics, num_drones, 'intrinsics'):
+            fxs.append(float(entry['fx']))
+            fys.append(float(entry['fy']))
+            cxs.append(float(entry['cx']))
+            cys.append(float(entry['cy']))
+            widths.append(int(entry['width']))
+            heights.append(int(entry['height']))
+            dc = np.asarray(entry['dist_coeffs'], dtype=np.float64)
+            if dc.shape != (5,):
+                raise ValueError("intrinsics['dist_coeffs'] must have shape (5,), got {}".format(dc.shape))
+            dists.append(dc)
+        if len(set(widths)) > 1 or len(set(heights)) > 1:
+            raise ValueError("image width/height must be shared across the batch so the images stay a single "
+                             "(B, H, W, 3) tensor; got per-drone resolutions")
+        self.width = widths[0]
+        self.height = heights[0]
+        self.fx = torch.tensor(fxs, dtype=torch.float32, device=self.device)
+        self.fy = torch.tensor(fys, dtype=torch.float32, device=self.device)
+        self.cx = torch.tensor(cxs, dtype=torch.float32, device=self.device)
+        self.cy = torch.tensor(cys, dtype=torch.float32, device=self.device)
+        self.dist_coeffs = torch.tensor(np.stack(dists, axis=0), dtype=torch.float32, device=self.device)  # (num_drones, 5)
 
-        self.fx = float(intrinsics['fx'])
-        self.fy = float(intrinsics['fy'])
-        self.width = int(intrinsics['width'])
-        self.height = int(intrinsics['height'])
-        self.cx = float(intrinsics['cx'])
-        self.cy = float(intrinsics['cy'])
+        # Per-drone extrinsics: body-to-camera position and rotation.
+        positions, rotations = [], []
+        for entry in _per_drone_list(extrinsics, num_drones, 'extrinsics'):
+            p_BC = np.asarray(entry['position'], dtype=np.float64)
+            q_BC = np.asarray(entry['orientation'], dtype=np.float64)
+            if p_BC.shape != (3,):
+                raise ValueError("extrinsics['position'] must have shape (3,), got {}".format(p_BC.shape))
+            if q_BC.shape != (4,):
+                raise ValueError("extrinsics['orientation'] must have shape (4,), got {}".format(q_BC.shape))
+            positions.append(p_BC)
+            rotations.append(Rotation.from_quat(q_BC).as_matrix())
+        self.p_BC = torch.tensor(np.stack(positions, axis=0), dtype=torch.float32, device=self.device)  # (num_drones, 3)
+        self.R_BC = torch.tensor(np.stack(rotations, axis=0), dtype=torch.float32,
+                                 device=self.device)  # (num_drones, 3, 3) body -> camera
 
-        p_BC = np.asarray(extrinsics['position'], dtype=np.float64)
-        q_BC = np.asarray(extrinsics['orientation'], dtype=np.float64)
-        if p_BC.shape != (3,):
-            raise ValueError("extrinsics['position'] must have shape (3,), got {}".format(p_BC.shape))
-        if q_BC.shape != (4,):
-            raise ValueError("extrinsics['orientation'] must have shape (4,), got {}".format(q_BC.shape))
-        self.p_BC = torch.tensor(p_BC, dtype=torch.float32, device=self.device)
-        self.R_BC = torch.tensor(Rotation.from_quat(q_BC).as_matrix(), dtype=torch.float32, device=self.device)  # body -> camera
+        # Per-drone near plane.
+        if near_plane is None:
+            near_plane = 0.05
+        self.near_plane = torch.tensor([float(v) for v in _per_drone_list(near_plane, num_drones, 'near_plane')],
+                                       dtype=torch.float32, device=self.device)  # (num_drones,)
+
+        # Per-drone splat radius.
+        self.splat_radius = [int(r) for r in _per_drone_list(splat_radius, num_drones, 'splat_radius')]
+        if any(r < 0 for r in self.splat_radius):
+            raise ValueError("splat_radius must be non-negative, got {}".format(self.splat_radius))
+
+        self.noise_params = _coerce_noise_params_list(noise_params, num_drones, self.splat_radius)
 
     @staticmethod
     def _quat_to_rotmat(q):
@@ -725,7 +962,7 @@ class BatchedPinholeCamera:
         R[:, 2, 2] = 1 - 2*(x**2 + y**2)
         return R
 
-    def measurement(self, world, states, **render_kwargs):
+    def measurement(self, worlds, states, **render_kwargs):
         """
         Compute camera measurements for a batch of drones.
 
@@ -734,125 +971,206 @@ class BatchedPinholeCamera:
         raw render() output is produced first, then optional measurement
         effects are layered on top. The visual noise effect (see noise_params
         in __init__) randomly injects synthetic features onto each frame when
-        enabled; additional effects can be added here later.
+        enabled for that drone; additional effects can be added here later.
 
         Inputs:
-            world, World object exposing get_surface_features(),
-                get_feature_colors(), get_feature_descriptors(), and
-                get_block_bounding_boxes()
+            worlds, a single World object shared by all drones, or a
+                list/tuple of length B of Worlds (None for an empty world) for
+                per-drone environments, see render() for the output shapes.
             states, a dict describing the vehicle states with keys
                 x, position, (B, 3) tensor
                 q, orientation quaternion [i, j, k, w], (B, 4) tensor
             **render_kwargs, additional keyword arguments; any key accepted by
                 render() (e.g. background_color, splat_radius, with_distortion,
-                feature_output) is forwarded. The special key noise_params (a
-                dict of the same tuning knobs as the constructor) overrides the
-                camera's noise for this call; noise_params=None disables the
-                noise effect.
+                feature_output) is forwarded. The special key noise_params
+                (None, a single dict, or a per-drone sequence of dict/None with
+                the same tuning knobs as the constructor) overrides the
+                camera's noise for this call; None disables the noise effect.
 
         Outputs:
-            measurement, a dict with keys
-                image, (B, H, W, 3) float tensor in [0, 1]
-                visible_mask, (B, N) bool tensor over all world features
-                depth, (B, N) camera-frame z tensor of all features
-                keypoints, list of length B of (M_b, 2) pixel tensors
-                keypoint_depths, list of length B of (M_b,) depth tensors
-                visible_features, list of length B of (M_b, 3) world-position tensors
-                colors, (B, N, 3) RGB colors of all features, or None when
-                    feature_output is 'descriptors'
-                visible_colors, list of length B of (M_b, 3) RGB colors of the
-                    visible features, or None when feature_output is 'descriptors'
-                descriptors, (B, N, D) generic descriptor vectors (e.g. SIFT/
-                    ALIKED) of all features, or None when feature_output is
-                    'rgb' or the world has none
-                visible_descriptors, list of length B of (M_b, D) descriptor
-                    vectors of the visible features, or None when feature_output
-                    is 'rgb'
+            measurement, a dict with the same keys and shapes as render().
         """
         noise_params = render_kwargs.pop('noise_params', _NOISE_UNSET)
         if noise_params is _NOISE_UNSET:
             noise_params = self.noise_params
         else:
-            noise_params = _coerce_noise_params(noise_params, default_splat_radius=1)
-        measurement = self.render(world, states, **render_kwargs)
-        if noise_params is not None:
+            noise_params = _coerce_noise_params_list(noise_params, self.num_drones, self.splat_radius)
+        measurement = self.render(worlds, states, **render_kwargs)
+        if any(params is not None for params in noise_params):
             self._inject_noise_batched(measurement, noise_params)
         return measurement
 
-    def _inject_noise_batched(self, measurement, noise_params):
+    def _inject_noise_batched(self, measurement, noise_params_list):
         """
         Randomly inject synthetic features onto each drone's rendered frame.
 
         Identical semantics to PinholeCamera._inject_noise, but applied
-        independently per drone in a batch: each drone gets its own Poisson
-        count of phantom features at random pixels. Only the image tensor is
-        modified; keypoint/depth/visibility outputs stay clean ground truth.
+        independently per drone using that drone's own noise_params (None, or
+        feature_rate 0, turns the effect off for that drone). When an entry
+        carries a seed, the per-drone stream is seeded with (seed, drone index)
+        so the whole batch is reproducible while each drone still gets its own
+        sequence. Only the image tensor is modified; keypoint/depth/visibility
+        outputs stay clean ground truth.
 
         Inputs:
             measurement, dict as returned by BatchedPinholeCamera.render()
-            noise_params, a coerced dict with keys feature_rate, splat_radius,
-                intensity, and an optional seed
+            noise_params_list, list of length num_drones of coerced dicts (with
+                keys feature_rate, splat_radius, intensity, optional seed) or
+                None
 
         Outputs:
             measurement, the same dict with image modified in place
         """
-        rng = np.random.default_rng(noise_params.get('seed'))
-        rate = noise_params['feature_rate']
-        if rate <= 0:
-            return measurement
-        radius = noise_params['splat_radius']
-        intensity = noise_params['intensity']
-
         B, H, W, _ = measurement['image'].shape
-        b_list, r_list, c_list, color_list = [], [], [], []
+        b_list, r_list, c_list, color_list, radius_list = [], [], [], [], []
         for b in range(B):
-            K = int(rng.poisson(rate))
+            params = noise_params_list[b]
+            if params is None or params['feature_rate'] <= 0:
+                continue
+            seed = params.get('seed')
+            rng = np.random.default_rng((seed, b) if seed is not None else None)
+            K = int(rng.poisson(params['feature_rate']))
             if K == 0:
                 continue
             u = rng.uniform(0.0, W, size=K)
             v = rng.uniform(0.0, H, size=K)
-            colors = rng.uniform(0.0, 1.0, size=(K, 3)) * intensity
+            colors = rng.uniform(0.0, 1.0, size=(K, 3)) * params['intensity']
             b_list.append(np.full(K, b, dtype=np.int64))
             r_list.append(np.round(v).astype(np.int64))
             c_list.append(np.round(u).astype(np.int64))
             color_list.append(colors)
+            radius_list.append(np.full(K, params['splat_radius'], dtype=np.int64))
         if not b_list:
             return measurement
 
         b_idx = torch.from_numpy(np.concatenate(b_list)).to(self.device)
         r = torch.from_numpy(np.concatenate(r_list)).to(self.device)
         c = torch.from_numpy(np.concatenate(c_list)).to(self.device)
+        radii = torch.from_numpy(np.concatenate(radius_list)).to(self.device)
         color_src = torch.from_numpy(np.concatenate(color_list, axis=0).astype(np.float32)).to(self.device)
-
-        dr = torch.arange(-radius, radius + 1, device=self.device)
-        dc = torch.arange(-radius, radius + 1, device=self.device)
-        rows = r[:, None, None] + dr[None, :, None]      # (K, Pr, 1)
-        cols = c[:, None, None] + dc[None, None, :]      # (K, 1, Pc)
-        inside = (rows >= 0) & (rows < H) & (cols >= 0) & (cols < W)
-        rows = rows.clamp(0, H - 1)
-        cols = cols.clamp(0, W - 1)
-        full_idx = b_idx[:, None, None] * (H * W) + rows * W + cols  # (K, Pr, Pc)
-        full_idx = full_idx[inside]
-        values = color_src[:, None, None, :].expand(-1, rows.shape[1], cols.shape[2], -1)[inside]
-        measurement['image'].reshape(B * H * W, 3).index_put_((full_idx,), values)
+        self._splat_batched(measurement['image'], b_idx, r, c, radii, color_src)
         return measurement
 
-    def render(self, world, states, background_color=None, splat_radius=1, with_distortion=True,
+    @staticmethod
+    def _splat_batched(image, b_idx, r, c, radii, colors):
+        """
+        Splat square color patches onto a (B, H, W, 3) image tensor.
+
+        Each feature is drawn on a (2*radius+1)^2 patch centered on its rounded
+        pixel. Radii may differ between features; where patches overlap the
+        winner is resolved deterministically: splats with a larger radius are
+        drawn on top, and within equal radii later features overwrite earlier
+        ones. (The group-by-group writes are de-duplicated explicitly because
+        PyTorch's index_put_ on overlapping indices is not deterministic.)
+
+        Inputs:
+            image, (B, H, W, 3) float tensor, modified in place
+            b_idx, (K,) drone index per feature
+            r, (K,) pixel row centers (unclamped)
+            c, (K,) pixel column centers (unclamped)
+            radii, (K,) integer splat radius per feature
+            colors, (K, 3) RGB colors
+        """
+        B, H, W, _ = image.shape
+        if b_idx.numel() == 0:
+            return
+        flat_all, value_all = [], []
+        for radius in sorted({int(x) for x in torch.unique(radii).tolist()}):
+            group = radii == radius
+            bi, ri, ci, co = b_idx[group], r[group], c[group], colors[group]
+            dr = torch.arange(-radius, radius + 1, device=image.device)
+            dc = torch.arange(-radius, radius + 1, device=image.device)
+            rows = ri[:, None, None] + dr[None, :, None]      # (K, Pr, 1)
+            cols = ci[:, None, None] + dc[None, None, :]      # (K, 1, Pc)
+            inside = (rows >= 0) & (rows < H) & (cols >= 0) & (cols < W)
+            rows = rows.clamp(0, H - 1)
+            cols = cols.clamp(0, W - 1)
+            full_idx = bi[:, None, None] * (H * W) + rows * W + cols  # (K, Pr, Pc)
+            full_idx = full_idx[inside]
+            values = co[:, None, None, :].expand(-1, rows.shape[1], cols.shape[2], -1)[inside]
+            flat_all.append(full_idx)
+            value_all.append(values)
+        if not flat_all:
+            return
+        flat = torch.cat(flat_all)
+        values = torch.cat(value_all)
+        # Stable-sort by flat pixel index: within an equal-index run, pixels
+        # stay in (radius ascending, feature order) so the last element of each
+        # run is the deterministic winner (largest radius, latest feature).
+        order = torch.argsort(flat, stable=True)
+        flat_s = flat[order]
+        val_s = values[order]
+        same = flat_s[1:] == flat_s[:-1]
+        last_of_run = torch.cat([~same, torch.tensor([True], device=flat.device)])
+        flat = image.reshape(B * H * W, 3)
+        flat.index_put_((flat_s[last_of_run],), val_s[last_of_run])
+
+    @staticmethod
+    def _compute_not_occluded(origin, directions, extents_list, device):
+        """
+        Determine which ray segments are NOT occluded by the given blocks.
+
+        A point is occluded if any block strictly intersects the open segment
+        (origin, origin+direction], using the same slab ray-tracing rule as
+        PinholeCamera.compute_occlusion. Vectorized over the trailing feature
+        dimension; origin and directions must share all preceding dimensions.
+
+        Inputs:
+            origin, (..., 3) ray origins
+            directions, (..., M, 3) vectors from each origin to each feature
+            extents_list, iterable of (xmin, xmax, ymin, ymax, zmin, zmax)
+            device, torch device
+
+        Outputs:
+            not_occluded, (..., M) bool tensor, True where the feature is
+                visible (not occluded)
+        """
+        not_occluded = torch.ones(directions.shape[:-1], dtype=torch.bool, device=device)
+        o = origin.unsqueeze(-2)  # (..., 1, 3)
+        for extents in extents_list:
+            box = np.asarray(extents, dtype=np.float64)
+            bmin = torch.tensor(box[[0, 2, 4]], dtype=torch.float32, device=device)
+            bmax = torch.tensor(box[[1, 3, 5]], dtype=torch.float32, device=device)
+            d_mask = directions != 0.0
+            safe_d = torch.where(d_mask, directions, torch.ones_like(directions))
+            t1 = (bmin - o) / safe_d
+            t2 = (bmax - o) / safe_d
+            in_slab = (o >= bmin) & (o <= bmax)
+            inf = torch.tensor(float('inf'), dtype=torch.float32, device=device)
+            t1 = torch.where(d_mask, t1, torch.where(in_slab, -inf, inf))
+            t2 = torch.where(d_mask, t2, torch.where(in_slab, inf, inf))
+            tmin = torch.minimum(t1, t2)
+            tmax = torch.maximum(t1, t2)
+            t_entry = torch.max(tmin, dim=-1).values
+            t_exit = torch.min(tmax, dim=-1).values
+            hit = (t_entry <= t_exit) & (t_entry < 1 - 1e-6) & (t_exit > 1e-6)
+            not_occluded &= ~hit
+        return not_occluded
+
+    def render(self, worlds, states, background_color=None, splat_radius=None, with_distortion=True,
                feature_output=None):
         """
         Render synthetic images for a batch of drones.
 
         Inputs:
-            world, World object exposing get_surface_features(),
+            worlds, a single World object shared by all drones in the batch
+                (the all-feature outputs come back as stacked (B, N, ...)
+                tensors), or a list/tuple of length B of World objects (None
+                gives a drone an empty world) for per-drone environments, in
+                which case the per-feature outputs (visible_mask, depth, colors,
+                descriptors) are lists of length B because the per-drone feature
+                count N can differ. A world must expose get_surface_features(),
                 get_feature_colors(), get_feature_descriptors(), and
-                get_block_bounding_boxes()
+                get_block_bounding_boxes().
             states, a dict describing the vehicle states with keys
                 x, position, (B, 3) tensor
                 q, orientation quaternion [i, j, k, w], (B, 4) tensor
             background_color, RGB tuple in [0, 1] (default [0.9, 0.9, 0.9])
             splat_radius, features are splatted on a (2*splat_radius+1) square
-                patch centered on their rounded pixel
-            with_distortion, if True, apply the distortion model
+                patch centered on their rounded pixel; a scalar (shared) or a
+                per-drone sequence, or None to use the camera's per-drone
+                defaults
+            with_distortion, if True, apply each drone's distortion model
             feature_output, per-call override of the camera's feature_output
                 setting ('all', 'rgb', or 'descriptors'); None uses the instance
                 default. See PinholeCamera.__init__ for the semantics.
@@ -860,21 +1178,23 @@ class BatchedPinholeCamera:
         Outputs:
             render, a dict with keys
                 image, (B, H, W, 3) float tensor in [0, 1]
-                visible_mask, (B, N) bool tensor over all world features
-                depth, (B, N) camera-frame z tensor of all features
+                visible_mask, (B, N) bool tensor (shared world) or list of
+                    length B of (N_b,) bool tensors (per-drone worlds) over all
+                    features
+                depth, (B, N) camera-frame z tensor (shared world) or list of
+                    length B of (N_b,) tensors (per-drone worlds)
                 keypoints, list of length B of (M_b, 2) pixel tensors
                 keypoint_depths, list of length B of (M_b,) depth tensors
                 visible_features, list of length B of (M_b, 3) world-position tensors
-                colors, (B, N, 3) RGB colors of all features, or None when
-                    feature_output is 'descriptors'
-                visible_colors, list of length B of (M_b, 3) RGB colors of the
-                    visible features, or None when feature_output is 'descriptors'
-                descriptors, (B, N, D) generic descriptor vectors (e.g. SIFT/
-                    ALIKED) of all features, or None when feature_output is
-                    'rgb' or the world has none
+                colors, (B, N, 3) tensor or list of length B of (N_b, 3) RGB
+                    color tensors, or None when feature_output is 'descriptors'
+                visible_colors, list of length B of (M_b, 3) RGB color tensors,
+                    or None when feature_output is 'descriptors'
+                descriptors, (B, N, D) tensor or list of length B of (N_b, D)
+                    generic descriptor vectors (e.g. SIFT/ALIKED), or None when
+                    feature_output is 'rgb' or a world has none
                 visible_descriptors, list of length B of (M_b, D) descriptor
-                    vectors of the visible features, or None when feature_output
-                    is 'rgb'
+                    tensors, or None when a world has none
         """
         if background_color is None:
             background_color = [0.9, 0.9, 0.9]
@@ -887,7 +1207,49 @@ class BatchedPinholeCamera:
         B = x.shape[0]
         if B > self.num_drones:
             raise ValueError("batch size B={} exceeds num_drones={}".format(B, self.num_drones))
+        if x.shape != (B, 3):
+            raise ValueError("states['x'] must have shape (B, 3), got {}".format(tuple(x.shape)))
+        if q.shape != (B, 4):
+            raise ValueError("states['q'] must have shape (B, 4), got {}".format(tuple(q.shape)))
 
+        # Per-drone camera parameters for this batch.
+        fx, fy, cx, cy = self.fx[:B], self.fy[:B], self.cx[:B], self.cy[:B]
+        dc = self.dist_coeffs[:B]  # (B, 5)
+        p_BC, R_BC = self.p_BC[:B], self.R_BC[:B]
+        near = self.near_plane[:B]  # (B,)
+
+        if splat_radius is None:
+            sp = [self.splat_radius[b] for b in range(B)]
+        else:
+            sp = [int(v) for v in _per_drone_list(splat_radius, B, 'splat_radius')]
+        sp_t = torch.tensor(sp, dtype=torch.long, device=self.device)  # (B,) per-drone radii
+
+        # World-to-camera rotation per drone: R_WC = R_BC @ R_WB^T.
+        R_WB = self._quat_to_rotmat(q)  # (B, 3, 3), body -> world
+        R_WC = torch.einsum('bij,bjk->bik', R_BC, R_WB.transpose(-1, -2))  # (B, 3, 3)
+        # Camera world position per drone: p_WC = x + R_WB @ p_BC.
+        p_WC = x + torch.einsum('bij,bj->bi', R_WB, p_BC)  # (B, 3)
+
+        image = torch.full((B, self.height, self.width, 3), float(background_color[0]),
+                           dtype=torch.float32, device=self.device)
+        image[:, :, :, 0] = background_color[0]
+        image[:, :, :, 1] = background_color[1]
+        image[:, :, :, 2] = background_color[2]
+
+        if isinstance(worlds, (list, tuple)):
+            return self._render_per_drone_worlds(worlds, B, image, fx, fy, cx, cy, dc, near, sp_t,
+                                                 R_WC, p_WC, include_colors, include_descriptors,
+                                                 with_distortion)
+        return self._render_shared_world(worlds, B, image, fx, fy, cx, cy, dc, near, sp_t,
+                                         R_WC, p_WC, include_colors, include_descriptors,
+                                         with_distortion)
+
+    def _render_shared_world(self, world, B, image, fx, fy, cx, cy, dc, near, sp_t,
+                             R_WC, p_WC, include_colors, include_descriptors, with_distortion):
+        """
+        The single-world render path: all drones observe the same environment,
+        so features are shared and the fixed-size outputs stay (B, N, ...).
+        """
         features = None
         getter = getattr(world, 'get_surface_features', None)
         if getter is not None:
@@ -913,12 +1275,6 @@ class BatchedPinholeCamera:
         N = features_np.shape[0]
         features_t = torch.tensor(features_np, dtype=torch.float32, device=self.device)
 
-        image = torch.full((B, self.height, self.width, 3), float(background_color[0]),
-                           dtype=torch.float32, device=self.device)
-        image[:, :, :, 0] = background_color[0]
-        image[:, :, :, 1] = background_color[1]
-        image[:, :, :, 2] = background_color[2]
-
         empty_kp = torch.empty((0, 2), dtype=torch.float32, device=self.device)
         empty_d = torch.empty((0,), dtype=torch.float32, device=self.device)
         empty_f = torch.empty((0, 3), dtype=torch.float32, device=self.device)
@@ -937,57 +1293,32 @@ class BatchedPinholeCamera:
                 'visible_descriptors': None,
             }
 
-        # World-to-camera rotation per drone: R_WC = R_BC @ R_WB^T.
-        R_WB = self._quat_to_rotmat(q)  # (B, 3, 3), body -> world
-        R_WC = torch.einsum('ij,bjk->bik', self.R_BC, R_WB.transpose(-1, -2))  # (B, 3, 3)
-
-        # Camera world position per drone: p_WC = x + R_WB @ p_BC.
-        p_WC = x + torch.einsum('bij,j->bi', R_WB, self.p_BC)  # (B, 3)
-
         # Camera-frame points: p_c = R_WC @ (p_W - p_WC).
-        points_cam = torch.einsum('bij,bnj->bni', R_WC, features_t - p_WC.unsqueeze(1))  # (B, N, 3)
-        depth = points_cam[:, :, 2]  # (B, N)
+        points_cam = torch.einsum('bij,bnj->bni', R_WC, features_t[None] - p_WC[:, None])  # (B, N, 3)
+        depth = points_cam[:, :, 2]
 
-        # Projection.
-        z = points_cam[:, :, 2]
+        # Projection with per-drone intrinsics/distortion.
+        z = depth
         safe_z = torch.where(z != 0, z, torch.ones_like(z))
         x_n = points_cam[:, :, 0] / safe_z
         y_n = points_cam[:, :, 1] / safe_z
         if with_distortion:
-            k1, k2, p1, p2, k3 = [float(v) for v in self.intrinsics['dist_coeffs']]
+            k1, k2, p1, p2, k3 = dc[:, 0:1], dc[:, 1:2], dc[:, 2:3], dc[:, 3:4], dc[:, 4:5]
             r2 = x_n**2 + y_n**2
             radial = 1.0 + k1*r2 + k2*r2**2 + k3*r2**3
             xd = x_n*radial + 2*p1*x_n*y_n + p2*(r2 + 2*x_n**2)
             yd = y_n*radial + p1*(r2 + 2*y_n**2) + 2*p2*x_n*y_n
         else:
             xd, yd = x_n, y_n
-        u = self.fx * xd + self.cx
-        v = self.fy * yd + self.cy
+        u = fx[:, None] * xd + cx[:, None]
+        v = fy[:, None] * yd + cy[:, None]
 
         # Occlusion (loop over blocks, vectorized over (B, N)).
-        not_occluded = torch.ones((B, N), dtype=torch.bool, device=self.device)
-        origin = p_WC  # (B, 3)
-        direction = features_t.unsqueeze(0) - origin.unsqueeze(1)  # (B, N, 3)
-        for extents in world.get_block_bounding_boxes():
-            box = np.asarray(extents, dtype=np.float64)
-            bmin = torch.tensor(box[[0, 2, 4]], dtype=torch.float32, device=self.device)  # (3,)
-            bmax = torch.tensor(box[[1, 3, 5]], dtype=torch.float32, device=self.device)  # (3,)
-            d_mask = direction != 0.0
-            safe_d = torch.where(d_mask, direction, torch.ones_like(direction))
-            t1 = (bmin.unsqueeze(0).unsqueeze(0) - origin.unsqueeze(1)) / safe_d  # (B, N, 3)
-            t2 = (bmax.unsqueeze(0).unsqueeze(0) - origin.unsqueeze(1)) / safe_d
-            in_slab = (origin.unsqueeze(1) >= bmin) & (origin.unsqueeze(1) <= bmax)  # (B, 1, 3)
-            inf = torch.tensor(float('inf'), dtype=torch.float32, device=self.device)
-            t1 = torch.where(d_mask, t1, torch.where(in_slab, -inf, inf))
-            t2 = torch.where(d_mask, t2, torch.where(in_slab, inf, inf))
-            tmin = torch.minimum(t1, t2)
-            tmax = torch.maximum(t1, t2)
-            t_entry = torch.max(tmin, dim=-1).values
-            t_exit = torch.min(tmax, dim=-1).values
-            hit = (t_entry <= t_exit) & (t_entry < 1 - 1e-6) & (t_exit > 1e-6)
-            not_occluded &= ~hit
+        not_occluded = self._compute_not_occluded(p_WC, features_t[None] - p_WC[:, None],
+                                                  world.get_block_bounding_boxes(), self.device)
 
-        visible_mask = (depth > self.near_plane) & (u >= 0) & (u < self.width) & (v >= 0) & (v < self.height) & not_occluded
+        visible_mask = (depth > near[:, None]) & (u >= 0) & (u < self.width) & \
+                       (v >= 0) & (v < self.height) & not_occluded
 
         if colors is None:
             splat_colors = torch.full((N, 3), 0.6, dtype=torch.float32, device=self.device)
@@ -999,34 +1330,18 @@ class BatchedPinholeCamera:
                 splat_colors = torch.clamp(torch.tensor(colors_np, dtype=torch.float32,
                                                         device=self.device), 0.0, 1.0)
 
+        descriptors_t = None
         if include_descriptors and descriptors is not None:
             desc_np = np.asarray(descriptors, dtype=np.float64)
-            if desc_np.ndim != 2 or desc_np.shape[0] != N:
-                descriptors_t = None
-            else:
+            if desc_np.ndim == 2 and desc_np.shape[0] == N:
                 descriptors_t = torch.tensor(desc_np, dtype=torch.float32, device=self.device)
-        else:
-            descriptors_t = None
 
-        # Splat visible features onto the (B, H*W, 3) image via index_put_.
+        # Splat visible features onto the (B, H, W, 3) image via index_put_.
         if torch.any(visible_mask):
             b_idx, n_idx = torch.nonzero(visible_mask, as_tuple=True)  # (K,)
             r = torch.round(v[b_idx, n_idx]).long()
             c = torch.round(u[b_idx, n_idx]).long()
-            color_src = splat_colors[n_idx]  # (K, 3)
-            dr = torch.arange(-splat_radius, splat_radius + 1, device=self.device)
-            dc = torch.arange(-splat_radius, splat_radius + 1, device=self.device)
-            rows = r[:, None, None] + dr[None, :, None]  # (K, Pr, 1)
-            cols = c[:, None, None] + dc[None, None, :]  # (K, 1, Pc)
-            inside = (rows >= 0) & (rows < self.height) & (cols >= 0) & (cols < self.width)
-            rows = rows.clamp(0, self.height - 1)
-            cols = cols.clamp(0, self.width - 1)
-            full_idx = b_idx[:, None, None] * (self.height * self.width) + rows * self.width + cols  # (K, Pr, Pc)
-            full_idx = full_idx[inside]
-            values = color_src[:, None, None, :].expand(-1, rows.shape[1], cols.shape[2], -1)[inside]
-            # image is freshly allocated and contiguous, so reshape returns a
-            # view and index_put_ writes through to it directly.
-            image.reshape(B * self.height * self.width, 3).index_put_((full_idx,), values)
+            self._splat_batched(image, b_idx, r, c, sp_t[b_idx], splat_colors[n_idx])
 
         # Rebuild per-drone outputs from the visible mask.
         keypoints = []
@@ -1042,20 +1357,180 @@ class BatchedPinholeCamera:
             visible_colors.append(splat_colors[mask] if include_colors else None)
             visible_descriptors.append(descriptors_t[mask] if descriptors_t is not None else None)
 
-        if include_colors:
-            colors_out = splat_colors.unsqueeze(0).expand(B, N, -1)
-        else:
-            colors_out = None
-
-        if descriptors_t is None:
-            descriptors_out = None
-        else:
-            descriptors_out = descriptors_t.unsqueeze(0).expand(B, N, -1)
+        colors_out = splat_colors.unsqueeze(0).expand(B, N, -1) if include_colors else None
+        descriptors_out = descriptors_t.unsqueeze(0).expand(B, N, -1) if descriptors_t is not None else None
 
         return {
             'image': image,
             'visible_mask': visible_mask,
             'depth': depth,
+            'keypoints': keypoints,
+            'keypoint_depths': keypoint_depths,
+            'visible_features': visible_features,
+            'colors': colors_out,
+            'visible_colors': visible_colors,
+            'descriptors': descriptors_out,
+            'visible_descriptors': visible_descriptors,
+        }
+
+    def _render_per_drone_worlds(self, worlds, B, image, fx, fy, cx, cy, dc, near, sp_t,
+                                 R_WC, p_WC, include_colors, include_descriptors, with_distortion):
+        """
+        The per-drone-world render path: each drone observes its own world
+        (a None entry is an empty world). Features are concatenated across the
+        batch and the heavy projection math stays vectorized, but because the
+        per-drone feature counts can differ the all-feature outputs are
+        per-drone lists.
+        """
+        worlds_list = list(worlds)
+        if len(worlds_list) != B:
+            raise ValueError("worlds must be a single World or a sequence of length B={} (one per drone), "
+                             "got {}".format(B, len(worlds_list)))
+
+        drone_features, drone_splat_colors, drone_desc, drone_blocks, n_list = [], [], [], [], []
+        for world in worlds_list:
+            if world is None:
+                n_list.append(0)
+                drone_features.append(np.empty((0, 3), dtype=np.float64))
+                drone_splat_colors.append(np.empty((0, 3), dtype=np.float32))
+                drone_desc.append(None)
+                drone_blocks.append([])
+                continue
+
+            features = None
+            getter = getattr(world, 'get_surface_features', None)
+            if getter is not None:
+                features = getter()
+            if features is None:
+                features = np.empty((0, 3), dtype=np.float64)
+            feats = np.asarray(features, dtype=np.float64).reshape(-1, 3)
+            n_i = feats.shape[0]
+            n_list.append(n_i)
+            drone_features.append(feats)
+
+            colors = None
+            getter = getattr(world, 'get_feature_colors', None)
+            if getter is None:
+                getter = getattr(world, 'get_feature_descriptors', None)  # legacy worlds: RGB colors
+            if getter is not None:
+                colors = getter()
+            colors_np = np.asarray(colors, dtype=np.float64) if colors is not None else None
+            if colors_np is None or colors_np.shape != (n_i, 3):
+                drone_splat_colors.append(np.full((n_i, 3), 0.6, dtype=np.float32))
+            else:
+                drone_splat_colors.append(np.clip(colors_np, 0.0, 1.0).astype(np.float32))
+
+            descriptors = None
+            getter = getattr(world, 'get_feature_descriptors', None)
+            if getter is not None:
+                descriptors = getter()
+            desc_np = np.asarray(descriptors, dtype=np.float64) if descriptors is not None else None
+            if desc_np is None or desc_np.ndim != 2 or desc_np.shape[0] != n_i:
+                drone_desc.append(None)
+            else:
+                drone_desc.append(desc_np)
+
+            drone_blocks.append(list(world.get_block_bounding_boxes()) if hasattr(world, 'get_block_bounding_boxes') else [])
+
+        total = sum(n_list)
+        empty_kp = torch.empty((0, 2), dtype=torch.float32, device=self.device)
+        empty_d = torch.empty((0,), dtype=torch.float32, device=self.device)
+        empty_f = torch.empty((0, 3), dtype=torch.float32, device=self.device)
+        empty_b = torch.zeros((0,), dtype=torch.bool, device=self.device)
+
+        if total == 0:
+            return {
+                'image': image,
+                'visible_mask': [empty_b for _ in range(B)],
+                'depth': [empty_d for _ in range(B)],
+                'keypoints': [empty_kp for _ in range(B)],
+                'keypoint_depths': [empty_d for _ in range(B)],
+                'visible_features': [empty_f for _ in range(B)],
+                'colors': [None for _ in range(B)],
+                'visible_colors': [None for _ in range(B)],
+                'descriptors': [None for _ in range(B)],
+                'visible_descriptors': [None for _ in range(B)],
+            }
+
+        # Concatenated features with a per-feature drone index.
+        features_all = torch.tensor(np.vstack(drone_features), dtype=torch.float32, device=self.device)  # (G, 3)
+        splat_colors_all = torch.tensor(np.vstack(drone_splat_colors), dtype=torch.float32,
+                                        device=self.device)  # (G, 3)
+        g = torch.cat([torch.full((nm,), i, dtype=torch.long, device=self.device)
+                       for i, nm in enumerate(n_list)])  # (G,) per-feature drone index
+
+        # Camera-frame points with each feature's own drone camera/pose.
+        points_cam = torch.einsum('gij,gj->gi', R_WC[g], features_all - p_WC[g])  # (G, 3)
+        depth = points_cam[:, 2]
+
+        # Projection with per-feature (via per-drone) intrinsics/distortion.
+        z = depth
+        safe_z = torch.where(z != 0, z, torch.ones_like(z))
+        x_n = points_cam[:, 0] / safe_z
+        y_n = points_cam[:, 1] / safe_z
+        if with_distortion:
+            dcg = dc[g]
+            k1, k2, p1, p2, k3 = dcg[:, 0], dcg[:, 1], dcg[:, 2], dcg[:, 3], dcg[:, 4]
+            r2 = x_n**2 + y_n**2
+            radial = 1.0 + k1*r2 + k2*r2**2 + k3*r2**3
+            xd = x_n*radial + 2*p1*x_n*y_n + p2*(r2 + 2*x_n**2)
+            yd = y_n*radial + p1*(r2 + 2*y_n**2) + 2*p2*x_n*y_n
+        else:
+            xd, yd = x_n, y_n
+        u = fx[g] * xd + cx[g]
+        v = fy[g] * yd + cy[g]
+
+        # Occlusion per drone over its own world's blocks.
+        not_occluded = torch.ones(total, dtype=torch.bool, device=self.device)
+        offset = 0
+        for i, world in enumerate(worlds_list):
+            n_i = n_list[i]
+            if n_i == 0:
+                continue
+            vis = self._compute_not_occluded(p_WC[i], features_all[offset:offset + n_i] - p_WC[i],
+                                             drone_blocks[i], self.device)
+            not_occluded[offset:offset + n_i] = vis
+            offset += n_i
+
+        visible_mask = (depth > near[g]) & (u >= 0) & (u < self.width) & \
+                       (v >= 0) & (v < self.height) & not_occluded
+
+        # Splat visible features with each drone's splat radius.
+        if torch.any(visible_mask):
+            idx = torch.nonzero(visible_mask)[:, 0]
+            b = g[idx]
+            r = torch.round(v[idx]).long()
+            c = torch.round(u[idx]).long()
+            self._splat_batched(image, b, r, c, sp_t[b], splat_colors_all[idx])
+
+        # Per-drone outputs.
+        keypoints, keypoint_depths, visible_features = [], [], []
+        visible_masks, depths, colors_out, visible_colors = [], [], [], []
+        descriptors_out, visible_descriptors = [], []
+        offset = 0
+        for i in range(B):
+            n_i = n_list[i]
+            sl = slice(offset, offset + n_i)
+            offset += n_i
+            vis_b = visible_mask[sl]
+            splat_b = splat_colors_all[sl]
+            desc_np = drone_desc[i]
+            desc_t = (torch.tensor(desc_np, dtype=torch.float32, device=self.device)
+                      if desc_np is not None else None)
+            visible_masks.append(vis_b)
+            depths.append(depth[sl])
+            keypoints.append(torch.stack([u[sl][vis_b], v[sl][vis_b]], dim=-1))
+            keypoint_depths.append(depth[sl][vis_b])
+            visible_features.append(features_all[sl][vis_b])
+            colors_out.append(splat_b if include_colors else None)
+            visible_colors.append(splat_b[vis_b] if include_colors else None)
+            descriptors_out.append(desc_t if include_descriptors and desc_t is not None else None)
+            visible_descriptors.append(desc_t[vis_b] if (include_descriptors and desc_t is not None) else None)
+
+        return {
+            'image': image,
+            'visible_mask': visible_masks,
+            'depth': depths,
             'keypoints': keypoints,
             'keypoint_depths': keypoint_depths,
             'visible_features': visible_features,
