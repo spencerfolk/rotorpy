@@ -842,7 +842,7 @@ class BatchedPinholeCamera:
             radii, pixels; can be overridden per call.
     """
     def __init__(self, num_drones, intrinsics=None, extrinsics=None, near_plane=0.05, device='cpu',
-                 noise_params=None, feature_output='all', splat_radius=1):
+                 noise_params=None, feature_output='all', splat_radius=1, frame_rate=None):
         """
         Parameters:
             num_drones, number of drones in the batch
@@ -865,6 +865,9 @@ class BatchedPinholeCamera:
                 semantics and per-call override as PinholeCamera.__init__.
             splat_radius, scalar (shared) or per-drone sequence of default
                 splat radii, pixels; can be overridden per render() call.
+            frame_rate, the rate at which the camera captures frames, Hz. Used
+                by simulate_batch() to decimate captures from the simulation
+                rate. None (default) captures a frame every simulation step.
         """
         if torch is None:
             raise ImportError("torch required for BatchedPinholeCamera")
@@ -936,6 +939,7 @@ class BatchedPinholeCamera:
             raise ValueError("splat_radius must be non-negative, got {}".format(self.splat_radius))
 
         self.noise_params = _coerce_noise_params_list(noise_params, num_drones, self.splat_radius)
+        self.frame_rate = frame_rate
 
     @staticmethod
     def _quat_to_rotmat(q):
@@ -1183,6 +1187,9 @@ class BatchedPinholeCamera:
                     features
                 depth, (B, N) camera-frame z tensor (shared world) or list of
                     length B of (N_b,) tensors (per-drone worlds)
+                projected, (B, N, 2) pixels of all features (may be out of
+                    bounds), or list of length B of (N_b, 2) tensors (per-drone
+                    worlds)
                 keypoints, list of length B of (M_b, 2) pixel tensors
                 keypoint_depths, list of length B of (M_b,) depth tensors
                 visible_features, list of length B of (M_b, 3) world-position tensors
@@ -1284,6 +1291,7 @@ class BatchedPinholeCamera:
                 'image': image,
                 'visible_mask': torch.zeros((B, 0), dtype=torch.bool, device=self.device),
                 'depth': torch.zeros((B, 0), dtype=torch.float32, device=self.device),
+                'projected': torch.empty((B, 0, 2), dtype=torch.float32, device=self.device),
                 'keypoints': [empty_kp for _ in range(B)],
                 'keypoint_depths': [empty_d for _ in range(B)],
                 'visible_features': [empty_f for _ in range(B)],
@@ -1364,6 +1372,7 @@ class BatchedPinholeCamera:
             'image': image,
             'visible_mask': visible_mask,
             'depth': depth,
+            'projected': torch.stack([u, v], dim=-1),
             'keypoints': keypoints,
             'keypoint_depths': keypoint_depths,
             'visible_features': visible_features,
@@ -1443,6 +1452,7 @@ class BatchedPinholeCamera:
                 'image': image,
                 'visible_mask': [empty_b for _ in range(B)],
                 'depth': [empty_d for _ in range(B)],
+                'projected': [empty_kp for _ in range(B)],
                 'keypoints': [empty_kp for _ in range(B)],
                 'keypoint_depths': [empty_d for _ in range(B)],
                 'visible_features': [empty_f for _ in range(B)],
@@ -1505,7 +1515,7 @@ class BatchedPinholeCamera:
 
         # Per-drone outputs.
         keypoints, keypoint_depths, visible_features = [], [], []
-        visible_masks, depths, colors_out, visible_colors = [], [], [], []
+        projected, visible_masks, depths, colors_out, visible_colors = [], [], [], [], []
         descriptors_out, visible_descriptors = [], []
         offset = 0
         for i in range(B):
@@ -1519,6 +1529,7 @@ class BatchedPinholeCamera:
                       if desc_np is not None else None)
             visible_masks.append(vis_b)
             depths.append(depth[sl])
+            projected.append(torch.stack([u[sl], v[sl]], dim=-1))
             keypoints.append(torch.stack([u[sl][vis_b], v[sl][vis_b]], dim=-1))
             keypoint_depths.append(depth[sl][vis_b])
             visible_features.append(features_all[sl][vis_b])
@@ -1531,6 +1542,7 @@ class BatchedPinholeCamera:
             'image': image,
             'visible_mask': visible_masks,
             'depth': depths,
+            'projected': projected,
             'keypoints': keypoints,
             'keypoint_depths': keypoint_depths,
             'visible_features': visible_features,

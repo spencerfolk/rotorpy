@@ -292,11 +292,47 @@ class World(object):
         over the samples and the sample points themselves.
         """
         pts = interp_path(path, res=0.001)
-        (closest_pts, closest_dist) = self.closest_points(pts)
+        collisions = self.collisions(pts, margin)
+        return pts[collisions]
+
+    def collisions(self, points, margin):
+        """
+        Return a boolean mask over ``points`` marking which are in collision
+        with the world (within ``margin`` of a block, or outside the world
+        boundary).
+
+        Unlike ``closest_points`` (which iterates over blocks in Python), the
+        block distance computation is vectorized over both points and blocks,
+        so it is cheap to call on a whole batch of vehicle positions at every
+        simulation step.
+
+        Inputs:
+            points, (N, 3) array of world positions
+            margin, the radius of the ball surrounding each point to determine
+                if a collision occurs, m
+
+        Returns:
+            collisions, (N,) bool array, True where the point collides
+        """
+        pts = np.asarray(points, dtype=np.float64)
+        if pts.ndim == 1:
+            pts = pts.reshape(1, -1)
+
+        blocks = self.world.get('blocks', [])
+        if len(blocks) == 0:
+            closest_dist = np.full(pts.shape[0], np.inf)
+        else:
+            # Clip each point to each axis-aligned block and take the minimum
+            # distance, all vectorized over (points, blocks).
+            r = np.array([b['extents'] for b in blocks], dtype=np.float64).reshape(-1, 6)
+            clipped = np.clip(pts[:, None, :],
+                              r[None, :, 0::2], r[None, :, 1::2])      # (N, M, 3)
+            dist = np.linalg.norm(pts[:, None, :] - clipped, axis=-1)  # (N, M)
+            closest_dist = dist.min(axis=-1)
+
         collisions_blocks = closest_dist < margin
         collisions_points = self.min_dist_boundary(pts) < 0
-        collisions = np.logical_or(collisions_points, collisions_blocks)
-        return pts[collisions]
+        return np.logical_or(collisions_points, collisions_blocks)
 
     def draw_empty_world(self, ax):
         """
