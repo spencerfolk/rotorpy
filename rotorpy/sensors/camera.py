@@ -442,14 +442,14 @@ class PinholeCamera:
 
         origin = np.asarray(camera_pose['x'], dtype=np.float64)
         direction = points_world - origin  # (N, 3), t = 1 at the feature
+        d_mask = direction != 0.0
+        safe_d = np.where(d_mask, direction, 1.0)
 
         for extents in world.get_block_bounding_boxes():
             box = np.asarray(extents, dtype=np.float64)
             bmin = box[[0, 2, 4]]
             bmax = box[[1, 3, 5]]
 
-            d_mask = direction != 0.0
-            safe_d = np.where(d_mask, direction, 1.0)
             t1 = (bmin - origin) / safe_d  # (3,) / (N, 3) -> (N, 3)
             t2 = (bmax - origin) / safe_d
             # For zero direction components the ray is parallel to the slab:
@@ -1064,8 +1064,16 @@ class BatchedPinholeCamera:
         pixel. Radii may differ between features; where patches overlap the
         winner is resolved deterministically: splats with a larger radius are
         drawn on top, and within equal radii later features overwrite earlier
-        ones. (The group-by-group writes are de-duplicated explicitly because
-        PyTorch's index_put_ on overlapping indices is not deterministic.)
+        ones.
+
+        This runs in O(number of splat pixels) rather than O(K log K): instead
+        of stable-sorting the flattened pixel indices to find the last writer
+        per pixel, scatter_reduce('amax') marks the highest feature position
+        that maps to each pixel, and index_put_ then writes each pixel exactly
+        once (its indices are unique, so the result is deterministic). Radius
+        groups are processed in descending order so larger-radius splats
+        overwrite smaller ones last, matching the documented priority. Inputs
+        are consumed in chunks so transient memory stays bounded.
 
         Inputs:
             image, (B, H, W, 3) float tensor, modified in place
@@ -1078,36 +1086,33 @@ class BatchedPinholeCamera:
         B, H, W, _ = image.shape
         if b_idx.numel() == 0:
             return
-        flat_all, value_all = [], []
-        for radius in sorted({int(x) for x in torch.unique(radii).tolist()}):
+        CHUNK = 65536
+        flat_image = image.reshape(B * H * W, 3)
+        for radius in sorted({int(x) for x in torch.unique(radii).tolist()}, reverse=True):
             group = radii == radius
             bi, ri, ci, co = b_idx[group], r[group], c[group], colors[group]
+            if bi.shape[0] == 0:
+                continue
             dr = torch.arange(-radius, radius + 1, device=image.device)
             dc = torch.arange(-radius, radius + 1, device=image.device)
-            rows = ri[:, None, None] + dr[None, :, None]      # (K, Pr, 1)
-            cols = ci[:, None, None] + dc[None, None, :]      # (K, 1, Pc)
-            inside = (rows >= 0) & (rows < H) & (cols >= 0) & (cols < W)
-            rows = rows.clamp(0, H - 1)
-            cols = cols.clamp(0, W - 1)
-            full_idx = bi[:, None, None] * (H * W) + rows * W + cols  # (K, Pr, Pc)
-            full_idx = full_idx[inside]
-            values = co[:, None, None, :].expand(-1, rows.shape[1], cols.shape[2], -1)[inside]
-            flat_all.append(full_idx)
-            value_all.append(values)
-        if not flat_all:
-            return
-        flat = torch.cat(flat_all)
-        values = torch.cat(value_all)
-        # Stable-sort by flat pixel index: within an equal-index run, pixels
-        # stay in (radius ascending, feature order) so the last element of each
-        # run is the deterministic winner (largest radius, latest feature).
-        order = torch.argsort(flat, stable=True)
-        flat_s = flat[order]
-        val_s = values[order]
-        same = flat_s[1:] == flat_s[:-1]
-        last_of_run = torch.cat([~same, torch.tensor([True], device=flat.device)])
-        flat = image.reshape(B * H * W, 3)
-        flat.index_put_((flat_s[last_of_run],), val_s[last_of_run])
+            # winners[pixel] = highest feature position (within this radius
+            # group) mapped to that pixel, or -1 if none.
+            winners = torch.full((B * H * W,), -1, dtype=torch.long, device=image.device)
+            for s in range(0, bi.shape[0], CHUNK):
+                be, re, ce = bi[s:s + CHUNK], ri[s:s + CHUNK], ci[s:s + CHUNK]
+                rows = re[:, None, None] + dr[None, :, None]      # (n, Pr, 1)
+                cols = ce[:, None, None] + dc[None, None, :]      # (n, 1, Pc)
+                inside = (rows >= 0) & (rows < H) & (cols >= 0) & (cols < W)
+                rows = rows.clamp(0, H - 1)
+                cols = cols.clamp(0, W - 1)
+                full_idx = be[:, None, None] * (H * W) + rows * W + cols  # (n, Pr, Pc)
+                full_idx = full_idx[inside]
+                fidx = torch.arange(s, s + re.shape[0], dtype=torch.long,
+                                    device=image.device)[:, None, None].expand(
+                    -1, rows.shape[1], cols.shape[2])[inside]
+                winners.scatter_reduce_(0, full_idx, fidx, reduce='amax', include_self=False)
+            pix = torch.nonzero(winners >= 0, as_tuple=False)[:, 0]
+            flat_image.index_put_((pix,), co[winners[pix]])
 
     @staticmethod
     def _compute_not_occluded(origin, directions, extents_list, device):
@@ -1131,16 +1136,29 @@ class BatchedPinholeCamera:
         """
         not_occluded = torch.ones(directions.shape[:-1], dtype=torch.bool, device=device)
         o = origin.unsqueeze(-2)  # (..., 1, 3)
-        for extents in extents_list:
-            box = np.asarray(extents, dtype=np.float64)
-            bmin = torch.tensor(box[[0, 2, 4]], dtype=torch.float32, device=device)
-            bmax = torch.tensor(box[[1, 3, 5]], dtype=torch.float32, device=device)
+        boxes = [np.asarray(e, dtype=np.float64) for e in extents_list]
+        if not boxes:
+            return not_occluded
+        # Precompute the (K, 6) box tensor once (min then max) so the block
+        # loop slices rows instead of allocating a fresh tensor per block.
+        try:
+            box_t = torch.tensor(np.stack(boxes, 0)[:, [0, 2, 4, 1, 3, 5]],
+                                 dtype=torch.float32, device=device)  # (K, 6)
+        except (ValueError, IndexError):
+            box_t = None  # ragged/oddly-shaped extents: fall back per box
+        inf = torch.tensor(float('inf'), dtype=torch.float32, device=device)
+        for b in range(len(boxes)):
+            if box_t is not None:
+                bmin, bmax = box_t[b, :3], box_t[b, 3:]
+            else:
+                box = boxes[b]
+                bmin = torch.tensor(box[[0, 2, 4]], dtype=torch.float32, device=device)
+                bmax = torch.tensor(box[[1, 3, 5]], dtype=torch.float32, device=device)
             d_mask = directions != 0.0
             safe_d = torch.where(d_mask, directions, torch.ones_like(directions))
             t1 = (bmin - o) / safe_d
             t2 = (bmax - o) / safe_d
             in_slab = (o >= bmin) & (o <= bmax)
-            inf = torch.tensor(float('inf'), dtype=torch.float32, device=device)
             t1 = torch.where(d_mask, t1, torch.where(in_slab, -inf, inf))
             t2 = torch.where(d_mask, t2, torch.where(in_slab, inf, inf))
             tmin = torch.minimum(t1, t2)
@@ -1321,12 +1339,24 @@ class BatchedPinholeCamera:
         u = fx[:, None] * xd + cx[:, None]
         v = fy[:, None] * yd + cy[:, None]
 
-        # Occlusion (loop over blocks, vectorized over (B, N)).
-        not_occluded = self._compute_not_occluded(p_WC, features_t[None] - p_WC[:, None],
-                                                  world.get_block_bounding_boxes(), self.device)
+        # Occlusion only for features that can possibly be rendered (already
+        # in-frame and past the near plane); culling the other ~90% of
+        # features first is what actually makes the per-block slab loop cheap.
+        base = (depth > near[:, None]) & (u >= 0) & (u < self.width) & \
+               (v >= 0) & (v < self.height)  # (B, N)
+        blocks = list(world.get_block_bounding_boxes())
+        not_occluded = torch.zeros_like(base)
+        if blocks and torch.any(base):
+            bi, ni = torch.nonzero(base, as_tuple=True)
+            for b in range(B):
+                sel = ni[bi == b]
+                if sel.numel() == 0:
+                    continue
+                vis = self._compute_not_occluded(p_WC[b], features_t[sel] - p_WC[b],
+                                                 blocks, self.device)
+                not_occluded[b, sel] = vis
 
-        visible_mask = (depth > near[:, None]) & (u >= 0) & (u < self.width) & \
-                       (v >= 0) & (v < self.height) & not_occluded
+        visible_mask = base & not_occluded
 
         if colors is None:
             splat_colors = torch.full((N, 3), 0.6, dtype=torch.float32, device=self.device)
@@ -1490,20 +1520,30 @@ class BatchedPinholeCamera:
         u = fx[g] * xd + cx[g]
         v = fy[g] * yd + cy[g]
 
-        # Occlusion per drone over its own world's blocks.
+        # Occlusion only for the features that can possibly be rendered (already
+        # in-frame and past the near plane); culling the rest first keeps the
+        # per-drone block loop on just the visible candidates. The per-drone
+        # split preserves CPU cache locality for large environments.
+        base = (depth > near[g]) & (u >= 0) & (u < self.width) & \
+               (v >= 0) & (v < self.height)  # (G,)
         not_occluded = torch.ones(total, dtype=torch.bool, device=self.device)
-        offset = 0
-        for i, world in enumerate(worlds_list):
-            n_i = n_list[i]
-            if n_i == 0:
-                continue
-            vis = self._compute_not_occluded(p_WC[i], features_all[offset:offset + n_i] - p_WC[i],
-                                             drone_blocks[i], self.device)
-            not_occluded[offset:offset + n_i] = vis
-            offset += n_i
+        occ_idx = torch.nonzero(base)[:, 0]
+        if occ_idx.numel() > 0:
+            cnt = torch.bincount(g[occ_idx], minlength=B)  # per-drone in-frame counts
+            starts = torch.cat([torch.zeros(1, dtype=torch.long, device=self.device),
+                                cnt.cumsum(0)])
+            for i in range(B):
+                n_sel = int(cnt[i])
+                if n_sel == 0:
+                    continue
+                sel = occ_idx[starts[i]:starts[i] + n_sel]  # drone i's in-frame features
+                if not drone_blocks[i]:
+                    continue
+                vis = self._compute_not_occluded(p_WC[i], features_all[sel] - p_WC[i],
+                                                 drone_blocks[i], self.device)
+                not_occluded[sel] = vis
 
-        visible_mask = (depth > near[g]) & (u >= 0) & (u < self.width) & \
-                       (v >= 0) & (v < self.height) & not_occluded
+        visible_mask = base & not_occluded
 
         # Splat visible features with each drone's splat radius.
         if torch.any(visible_mask):
