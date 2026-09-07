@@ -1,6 +1,6 @@
 [project]
 name = "rotorpy"
-version = "2.1.3"
+version = "3.0.0"
 description = "A multirotor simulator with aerodynamics for education and research."
 readme = "README.md"
 requires-python = ">=3.8"
@@ -42,10 +42,6 @@ batched = [
 learning = [
     'stable_baselines3',
     'tensorboard',
-]
-dev = [
-    'pytest',
-    'filterpy == 1.4.5',
 ]
 testing = [
     'pytest',
@@ -95,3 +91,13 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["rotorpy", "rotorpy.*"]
 [tool.setuptools]
+
+[tool.pytest.ini_options]
+addopts = '-m "not run_examples"'
+markers = [
+    "run_examples: full end-to-end execution of just the examples in ./examples/",
+]
+filterwarnings = [
+    "ignore:Matplotlib is currently using agg.*:UserWarning",
+    "ignore:Animation was deleted without rendering anything.*:UserWarning",
+]

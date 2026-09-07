@@ -7,6 +7,7 @@ try:
 except ImportError:
     pass
 
+
 class TrajTemplate(object):
     """
     The trajectory is implemented as a class. There are two required methods for each trajectory class: __init__() and update().

@@ -132,13 +132,23 @@ dmypy.json
 sandbox.py
 waypoint_traj.py
 
-# Ignore csv files. 
+# Ignore csv files and npz files generated from demos or training data generation.
 *.csv
+*.npz
 
 # Ignore benchmark figures. 
 /tests/*.png 
 /tests/*.pdf
 /tests/*.jpg
+
+# Ignore example figures and data.
+/examples/*.png
+/examples/*.gif
+/examples/*.mp4
+/examples/**/*.png
+/examples/**/*.pt
+/examples/**/*.gif
+/examples/**/*.mp4
 
 # DS_Store
 *.DS_Store

@@ -3,8 +3,8 @@
 RotorPy is a simple dynamics simulator for teaching aerial robotics planning and control and preliminary probing of interesting research questions. It is organized into a set of modules: 
 
 * **Vehicles** - Contains the continuous-time dynamics for the UAV of interest. 
-* **Sensors** - Transforms ground truth vehicle state into noisy and biased measurements. 
-* **Worlds** - Contains `json` map files for constructing world bounds and obstacles. 
+* **Sensors** - Transforms ground truth vehicle state into noisy and biased measurements (IMU, motion capture), and includes a pinhole camera that renders the world's visual features. 
+* **Worlds** - Contains `json` map files for constructing world bounds, obstacles, and optional camera visual features. 
 * **Controllers** - Stabilizes the vehicle to a trajectory. 
 * **Trajectories** - Dictates the desired motion of the vehicle in time. 
 * **Wind** - Custom spatial and/or temporal vector fields that add external disturbances to the vehicle.  

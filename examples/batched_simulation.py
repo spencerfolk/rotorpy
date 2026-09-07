@@ -125,11 +125,11 @@ def main():
     simulate_fn_states = results[1]
 
     # Contains the timesteps at which each drone terminated.
-    simulate_fn_done_times = results[-1]
+    simulate_fn_done_times = results[7]
     print(f"FPS of batched simulation was {np.sum(simulate_fn_done_times)/(sim_fn_end_time - sim_fn_start_time)}")
 
     # Contains the exit statuses for each drone.
-    exit_statuses = results[-2]
+    exit_statuses = results[6]
 
     #### Sequential Simulation ####
     # For comparison, we'll also simulate a standard Multirotor.

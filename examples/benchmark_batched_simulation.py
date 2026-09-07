@@ -125,7 +125,7 @@ def main():
         results = simulate_batch(world, initial_states, vehicle, controller, batched_traj, wind_profile, batched_imu, t_fs, sim_dt, 0.25, print_fps=False)
         cpu_ram_usage.append(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024)
         print(f"Peak memory usage so far = {cpu_ram_usage[-1]} mb")
-        total_frames = np.sum(results[-1])  # sum the timesteps at which each drone finished.
+        total_frames = np.sum(results[7])  # sum the timesteps at which each drone finished.
         done_time = time.time() - start_time
         cpu_fps.append(total_frames/done_time)
         cpu_times.append(done_time)
@@ -149,7 +149,7 @@ def main():
 
             start_time = time.time()
             results = simulate_batch(world, initial_states, vehicle, controller, batched_traj, wind_profile, batched_imu, t_fs, sim_dt, 0.25, print_fps=False)
-            total_frames = np.sum(results[-1])  # sum the timesteps at which each drone finished.
+            total_frames = np.sum(results[7])  # sum the timesteps at which each drone finished.
             done_time = time.time() - start_time
             gpu_fps.append(total_frames/done_time)
             gpu_times.append(done_time)

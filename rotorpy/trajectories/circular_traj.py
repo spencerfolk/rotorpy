@@ -9,7 +9,8 @@ class ThreeDCircularTraj(object):
     """
 
     """
-    def __init__(self, center=np.array([0,0,0]), radius=np.array([1,1,1]), freq=np.array([0.2,0.2,0.2]), yaw_bool=False):
+    def __init__(self, center=np.array([0,0,0]), radius=np.array([1,1,1]), freq=np.array([0.2,0.2,0.2]),
+                 yaw_bool=False, yaw_traj=None):
         """
         This is the constructor for the Trajectory object. A fresh trajectory
         object will be constructed before each mission.
@@ -18,6 +19,13 @@ class ThreeDCircularTraj(object):
             center, the center of the circle (m)
             radius, the radius of the circle (m)
             freq, the frequency with which a circle is completed (Hz)
+            yaw_bool, if True, commands a sinusoidal yaw (legacy behavior)
+            yaw_traj, yaw trajectory controller. Can be:
+                None    - yaw is fixed at 0 (or uses yaw_bool if set)
+                'forward' - yaw tracks the velocity direction (uses ForwardYaw)
+                object  - any object with an update(t, x_dot) method returning
+                          a dict with keys 'yaw', 'yaw_dot', 'yaw_ddot'
+                When yaw_traj is provided it takes precedence over yaw_bool.
         """
 
         self.center = center
@@ -28,6 +36,15 @@ class ThreeDCircularTraj(object):
         self.omega = 2*np.pi*self.freq
 
         self.yaw_bool = yaw_bool
+        self._init_yaw_traj(yaw_traj)
+
+    def _init_yaw_traj(self, yaw_traj):
+        """Initialize the yaw trajectory controller."""
+        if yaw_traj == 'forward':
+            from rotorpy.trajectories.yaw_controllers import ForwardYaw
+            self._yaw_traj = ForwardYaw()
+        else:
+            self._yaw_traj = yaw_traj
 
     def update(self, t):
         """
@@ -61,7 +78,12 @@ class ThreeDCircularTraj(object):
                              self.radius[1]*(self.omega[1]**4)*np.sin(self.omega[1]*t),
                              self.radius[2]*(self.omega[2]**4)*np.sin(self.omega[2]*t)])
 
-        if self.yaw_bool:
+        if self._yaw_traj is not None:
+            yaw_out = self._yaw_traj.update(t, x_dot)
+            yaw = yaw_out['yaw']
+            yaw_dot = yaw_out['yaw_dot']
+            yaw_ddot = yaw_out['yaw_ddot']
+        elif self.yaw_bool:
             yaw = 0.8*np.pi/2*np.sin(2.5*t)
             yaw_dot = 0.8*2.5*np.pi/2*np.cos(2.5*t)
             yaw_ddot = 0.8*(2.5**2)*np.pi/2*np.sin(2.5*t)

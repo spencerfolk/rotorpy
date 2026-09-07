@@ -7,7 +7,7 @@ class ConstantSpeed(object):
     """
     
     """
-    def __init__(self, init_pos, dist=1, speed=1, axis=0, repeat=False):
+    def __init__(self, init_pos, dist=1, speed=1, axis=0, repeat=False, yaw_traj=None):
         """
         Constant speed will command a step response in speed on a specified axis. The following inputs
         try to ensure that the vehicle is not commanded to go beyond the boundaries of the environment. 
@@ -18,6 +18,11 @@ class ConstantSpeed(object):
             speed := the speed of the trajectory in meters. 
             axis := the axis to travel (0 -> X, 1 -> Y, 2 -> Z)
             repeat := determines if the trajectory should repeat, where the direction is switched from its current state.
+            yaw_traj, yaw trajectory controller. Can be:
+                None    - yaw is fixed at 0 (default)
+                'forward' - yaw tracks the velocity direction (uses ForwardYaw)
+                object  - any object with an update(t, x_dot) method returning
+                          a dict with keys 'yaw', 'yaw_dot', 'yaw_ddot'
         """
 
         self.pt1 = init_pos
@@ -38,6 +43,16 @@ class ConstantSpeed(object):
         self.reverse_threshold = 0.01
 
         self.pt2 = self.pt1 + self.speed*self.t_width*self.active_axis
+
+        self._init_yaw_traj(yaw_traj)
+
+    def _init_yaw_traj(self, yaw_traj):
+        """Initialize the yaw trajectory controller."""
+        if yaw_traj == 'forward':
+            from rotorpy.trajectories.yaw_controllers import ForwardYaw
+            self._yaw_traj = ForwardYaw()
+        else:
+            self._yaw_traj = yaw_traj
 
     def update(self, t):
         """
@@ -68,9 +83,15 @@ class ConstantSpeed(object):
         x_dddot = np.zeros((3,))
         x_ddddot = np.zeros((3,))
 
-        yaw    = 0
-        yaw_dot = 0
-        yaw_ddot = 0
+        if self._yaw_traj is not None:
+            yaw_out = self._yaw_traj.update(t, x_dot)
+            yaw = yaw_out['yaw']
+            yaw_dot = yaw_out['yaw_dot']
+            yaw_ddot = yaw_out['yaw_ddot']
+        else:
+            yaw    = 0
+            yaw_dot = 0
+            yaw_ddot = 0
 
         flat_output = { 'x':x, 'x_dot':x_dot, 'x_ddot':x_ddot, 'x_dddot':x_dddot, 'x_ddddot':x_ddddot,
                         'yaw':yaw, 'yaw_dot':yaw_dot, 'yaw_ddot':yaw_ddot}
