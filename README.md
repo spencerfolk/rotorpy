@@ -2,63 +2,55 @@
 A Python-based multirotor simulation environment with aerodynamic wrenches, useful for education and research in estimation, planning, and control for UAVs.
 <p align="center"><img src="/media/double_pillar.gif" width="32%"/><img src="/media/gusty.gif" width="32%"/><img src="/media/minsnap.gif" width="32%"/></p>
 
-**NEW in `v3.0`**: RotorPy now includes a fast, non-photorealistic camera sensor for developing and testing vision algorithms (visual odometry, image correspondence, learning-based vision policies, etc.). World blocks can now carry visual features (3D points with RGB colors and optional descriptor vectors) specified either directly in the world JSON or using generator scripts.
+**NEW in `v3.0`**: RotorPy now includes a fast (non-photorealistic) camera sensor for developing and testing vision algorithms (visual odometry, vision-based policies, etc.). Check out the new examples: [`camera_demo.py`](/examples/camera_demo.py), [`camera_visualization.py`](/examples/camera_visualization.png), and  [`visual_servoing_policy.py`](/examples/visual_servoing_policy.py).
+<p align="center"><img src="/media/camera_demo.gif" width="50%"/><img src="/media/visual_servoing_example.gif" width="50%">
+<p align="center"><img src="/media/camera_highlight.png" width="100%">
 
-`PinholeCamera.render()` projects those features into an image with a customizable pinhole + distortion model and explicit occlusion handling, and `BatchedPinholeCamera` renders for many drones in parallel on CPU or GPU. Each output pairs per-feature 3D/keypoint information with the RGB `colors` and descriptor `descriptors`, and the `feature_output` toggle (`'all'`/`'rgb'`/`'descriptors'`) trims either when collecting large datasets. See `rotorpy/examples/camera_visualization.py` for a complete example.
-
-<!-- TODO: Add images or animations highlighting the new camera capability. -->
+World blocks can now carry visual features: 3D points with RGB colors and optional descriptor vectors. The new `PinholeCamera` sensor projects those features into an image using the standard pinhole + distortion model. `BatchedPinholeCamera` renders images for many UAVs in parallel. 
 
 ## Purpose and Model Scope
-The original focus of this simulator was on accurately simulating rotary-wing UAV dynamics with added lumped parameter representations of the aerodynamics for course design and exploratory research. These aerodynamic effects, listed below, are negligible at hover in still air; however, as relative airspeed increases (e.g. for aggressive maneuvers or in the presence of high winds), they quickly become noticeable and force the student/researcher to reconcile with them. 
+The original focus of this simulator was on accurately simulating rotary-wing UAV dynamics using lumped parameter representations of the aerodynamics, primarily for graduate level course design and exploratory research. These aerodynamic effects, outlined in [`rotorpy/vehicles/README.md`](/rotorpy/vehicles/README.md), are negligible at hover in still air; however, as relative airspeed increases (e.g. for aggressive maneuvers or in the presence of high winds), they quickly become noticeable and force the student/researcher to reconcile with them. 
 
-As RotorPy continues to grow, the focus is now on building a sufficiently realistic dynamics simulator that can scale to quickly generate thousands (or even millions) of simulated rotary-wing UAVs as a tool for deep learning, reinforcement learning, and Monte Carlo studies on existing (or new!) algorithms in estimation, planning, and control. 
+As RotorPy continues to grow, the focus is now on building a sufficiently realistic dynamics simulator that can also scale to quickly generate extremely large datasets as a tool for deep learning, reinforcement learning, and Monte Carlo studies on existing (or new!) algorithms in estimation, planning, and control. 
 
-The engine is designed from the bottom up to be lightweight, easy to install with very limited dependencies or requirements, and interpretable to anyone with basic working knowledge of Python. The intent is for users to gain intuition about UAV dynamics/aerodynamics and learn how to develop control and/or estimation algorithms for rotary wing vehicles especially in the presence of aerodynamic wrenches. 
+The engine is designed from the bottom up to be lightweight, easy to install with very limited dependencies or requirements, and interpretable to anyone with basic working knowledge of Python. The intent is for users to gain intuition about UAV dynamics and learn how to develop control and/or estimation algorithms for rotary wing vehicles especially in the presence of aerodynamic wrenches and strong winds. 
 
-The following aerodynamic effects of interest are within the scope of this model: 
-1. **Parasitic Drag** - Drag associated with non-lifting surfaces like the frame. This drag is quadratic in airspeed. 
-2. **Rotor Drag** - This is an apparent drag force that is a result of the increased drag produced by the advancing blade of a rotor. Rotor drag is linear in airspeed. 
-3. **Blade Flapping** - An effect of dissymmetry of lift, blade flapping is the motion of the blade up or down that results in a pitching moment. The pitching moment is linear in the airspeed. 
-4. **Induced Drag** - Another effect of dissymmetry of lift, more apparent in semi-rigid or rigid blades, where an increase of lift on the advancing blade causes an increased induced downwash, which in turn tilts the lift vector aft resulting in more drag. Induced drag is linear in the airspeed. 
-5. **Translational Lift** - In forward motion, the induced velocity at the rotor plane decreases, causing an increase in lift generation. 
-6. **Translational Drag** - A consequence of translational lift, and similar to **Induced Drag**, the increased lift produced in forward flight will produce an increase in induced drag on the rotor. 
-
-Ultimately the effects boil down to forces acting anti-parallel to the relative airspeed and a combination of pitching moments acting parallel and perpendicular to the relative airspeed. The rotor aerodynamic effects (rotor drag, blade flapping, induced drag, and translational drag) can be lumped into a single drag force acting at each rotor hub, whereas parasitic drag can be lumped into a single force and moment vector acting at the center of mass. 
-
-What's currently ignored: any lift produced by the frame or any torques produced by an imbalance of drag forces on the frame. We also currently neglect variations in the wind along the length of the UAV, implicitly assuming that the characteristic length scales of the wind fields are larger than UAV's maximum dimensions. Remember, the drag models used here are representative of bluff bodies, not wings. 
-
-RotorPy also includes first-order motor dynamics to simulate lag, as well as support for spatio-temporal wind flow fields for the UAV to interact with. 
+We hope that this repository will be a helpful resource for educators and researchers. 
 
 # Installation
 
 RotorPy can be installed using `pip`:
 
-```
+```bash
 pip install rotorpy 
 ```
 
-To install learning dependencies, run: 
+This will install the minimum packages to run the most basic version of the simulator. But to get the most of RotorPy you may want to consider...
 
-```
-pip install rotorpy.[learning]
+```bash
+pip install rotorpy.[all]       # the complete package, includes everything below too
+pip install rotorpy.[testing]   # if you're planning on developing and need to run the testing suite
+pip install rotorpy.[batched]   # for the batched (parallelized) environments
+pip install rotorpy.[learning]  # for learning with the gymnasium environment
+pip install rotorpy.[px4]       # for integration with PX4
 ```
 
-In addition to the base requirements, it will install `stable_baselines3` and `tensorboard`. For other tagged versions, see `pyproject.toml`. 
+For other tagged versions, see `pyproject.toml`. It's an evolving thing.
 
 # Usage
 
-There are a few example scripts found in `rotorpy/examples/` that demonstrate how to use RotorPy in a variety of ways including for Monte Carlo evaluations, reinforcement learning, and swarms. 
+There are a few example scripts found in `rotorpy/examples/` that demonstrate how to use RotorPy in a variety of ways including for Monte Carlo evaluations, reinforcement learning, swarms, and even visual servoing (as of `v3.0`). 
 
 #### Regular usage
-A good place to start would be to reference the `rotorpy/examples/basic_usage.py` script. It goes through the necessary imports and how to create and execute an instance of the simulator. 
+A good place to start would be to reference the `rotorpy/examples/basic_usage.py` script. It goes through the necessary imports and how to create and execute an instance of the base simulation environment. 
  
-At minimum the simulator requires vehicle, controller, and trajectory objects. The vehicle (and potentially the controller) is parameterized by a unique parameter file, such as in `rotorpy/vehicles/hummingbird_params.py`. There is also the option to specify your own IMU, world bounds, and how long you would like to run the simulator for. 
+At minimum the simulator requires vehicle, controller, and trajectory objects. The vehicle (and potentially the controller) is parameterized by a unique parameter file, such as `rotorpy/vehicles/hummingbird_params.py`. There is also the option to specify your own IMU, world bounds, and how long you would like to run the simulator for. 
 
 The output of the simulator is a dictionary containing a time vector and the time histories of all the vehicle's states, inputs, and measurements.
 
 Below is a minimum working example: 
 
-```
+```python
 import numpy as np
 from rotorpy.environments import Environment
 from rotorpy.vehicles.multirotor import Multirotor
@@ -72,10 +64,11 @@ sim_instance = Environment(vehicle=Multirotor(quad_params),           # vehicle 
                            trajectory=TwoDLissajous(),                # trajectory object, must be specified.
                            wind_profile=SinusoidWind(),               # OPTIONAL: wind profile object, if none is supplied it will choose no wind. 
                            sim_rate     = 100,                        # OPTIONAL: The update frequency of the simulator in Hz. Default is 100 Hz.
+                           camera       = None,                       # OPTIONAL: camera sensor object, by default won't use the camera if none is supplied.
                            imu          = None,                       # OPTIONAL: imu sensor object, if none is supplied it will choose a default IMU sensor.
                            mocap        = None,                       # OPTIONAL: mocap sensor object, if none is supplied it will choose a default mocap.  
                            estimator    = None,                       # OPTIONAL: estimator object
-                           world        = None,                      # OPTIONAL: the world, same name as the file in rotorpy/worlds/, default (None) is empty world
+                           world        = None,                       # OPTIONAL: the world, same name as the file in rotorpy/worlds/, default (None) is empty world
                            safety_margin= 0.25                        # OPTIONAL: defines the radius (in meters) of the sphere used for collision checking
                        )
 
@@ -102,16 +95,18 @@ results = sim_instance.run(t_final      = 20,       # The maximum duration of th
                     )
 
 ```
-
-#### Vision
-New in `v3.0.0`! RotorPy includes a fast, non-photorealistic pinhole camera sensor for learning or developing computer vision algorithms (visual odometry, image correspondence, etc.). World blocks can carry visual features (3D positions with RGB colors and optional descriptor vectors, e.g. 128-d SIFT) placed by pluggable generators (`World.grid_forest(..., add_features=True)`), supporting regular surface grids, areal-density random splatter, uniform or random placement along block edges, and synthetic `descriptor_dim`-dimensional feature vectors. Features can also be embedded directly in the world JSON for exact reproducibility across trials, without relying on random seeds. `PinholeCamera.render()` projects those features into an image with a customizable pinhole + distortion model while explicitly handling occlusion too. `render()`/`measurement()` outputs pair per-feature 3D/keypoint information with both the RGB `colors` and the `descriptors`, so the same ground-truth can feed descriptor-based VO/VIO matching, dense depth, or vision policies; pass `feature_output` (`'all'`/`'rgb'`/`'descriptors'`) to return both or to trim either the colors or the descriptor arrays when collecting large datasets. A torch-parallel `BatchedPinholeCamera` renders from many vehicles simultaneously, with per-drone domain randomization — every drone can carry its own intrinsics, extrinsics, near plane, splat radius, and noise profile (sampled by `randomize_camera_params()`), and can even observe its own `World` via the per-drone-worlds path — for scalable sim-to-real training pipelines. See `rotorpy/examples/camera_visualization.py` for a complete example, and `rotorpy/sensors/` for the sensor docs.
+#### Batched Simulations
+RotorPy includes a batched environment which can simulate multiple drones in parallel on CPU or GPU. For simulations of >1000 drones, we have observed speedups of 25x purely on CPU compared to simulating all drones sequentially. We have also implemented batched versions of existing control, trajectory, sensor, and wind classes. See [`examples/batched_simulation.py`](/examples/batched_simulation.py) for how to use the batched simulation, and [`examples/benchmark_batched_simulation.py`](/examples/benchmark_batched_simulation.py) to measure the speedup on your own system.
 
 #### Reinforcement Learning
-New in `v1.1.0`, RotorPy includes a custom Gymnasium environment, `QuadrotorEnv`, which is a stripped down version of the regular simulation environment intended for applications in reinforcement learning. `QuadrotorEnv` features all the aerodynamics and motor dynamics, but also supports different control abstractions ranging from high level velocity vector commands all the way down to direct individual motor speed commands. This environment also allows the user to specify their own reward function. 
+RotorPy includes a custom Gymnasium environment, `QuadrotorEnv`, which is a stripped down version of the regular simulation environment intended for applications in reinforcement learning. `QuadrotorEnv` features all the aerodynamics and motor dynamics, but also supports different control abstractions ranging from high level velocity vector commands all the way down to direct individual motor speed commands. This environment also allows the user to specify their own reward function. 
 
 For an example of how to interface with this environment, see `rotorpy/examples/gymnasium_basic_usage.py`. You can also see an example of training a quadrotor to hover using this environment in `rotorpy/examples/ppo_hover_train.py` and `rotorpy/examples/ppo_hover_eval.py`. 
 
 You can find this new environment in the `rotorpy/learning/` module. 
+
+#### And much more
+RotorPy is intended to be flexible to support the aerial robotics field as it expands. Explore the examples in this repository and [citations](https://scholar.google.com/scholar?oi=bibs&hl=en&cites=17472125763442225756) to see the many ways RotorPy can be used to learn more about aerial robotics. 
 
 # Development
 
@@ -133,6 +128,7 @@ If you use RotorPy for your work please cite our companion workshop paper contri
 }
 ```
 
+See how academics have been using RotorPy: 
 [![Citations](https://img.shields.io/badge/Citations-Google%20Scholar-green?logo=googlescholar)](https://scholar.google.com/scholar?oi=bibs&hl=en&cites=17472125763442225756)
 
 # Acknowledgements
