@@ -9,6 +9,11 @@ saved to a .npz archive (plus optional pngs) via save_camera_data(); they are
 deliberately excluded from save_to_csv() since images are far too large for a
 csv.
 """
+
+""" 
+Imports
+""" 
+
 import os
 import sys
 
@@ -79,121 +84,113 @@ class InwardYawFromTraj:
         return {'yaw': yaw, 'yaw_dot': yaw_dot, 'yaw_ddot': yaw_ddot}
 
 
-def main():
-    # ------------------------------------------------------------------
-    # 1. Load world and set up the onboard camera
-    # ------------------------------------------------------------------
-    world = World.from_file(os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), '..', 'rotorpy',
-        'worlds', 'double_pillar.json'))
-    # Generate surface features for the world. Each feature is a 3D point with
-    # an RGB color plus an optional descriptor vector (e.g. SIFT/ALIKED). The
-    # camera splats using the colors and streams both colors and descriptors
-    # through its output, giving a full ground-truth training signal for VO/VIO
-    # and vision-based policies. descriptor_dim attaches synthetic descriptor
-    # vectors (L2-normalized, seed-reproducible) to every feature.
-    world.generate_surface_features(mode='regular', spacing=0.08, descriptor_noise=0.15,
-                                    descriptor_dim=128)  # 128-d SIFT-style synthetic descriptors
-    # world.generate_surface_features(mode='random', feature_density=500, descriptor_noise=0.15, descriptor_dim=128)  # density-based random splatter (features/m^2)
-    # world.generate_surface_features(mode='edge_uniform', spacing=0.05, descriptor_noise=0.15)  # features along edges, uniform spacing
-    # world.generate_surface_features(mode='edge_random', edge_density=200, descriptor_noise=0.15)  # features along edges, random
+""" 
+Setup
+"""
 
-    # Forward-facing camera: camera +z (optical axis) aligned with body +x, with slight upward tilt.
-    base_orientation = Rotation.from_euler('x', -45, degrees=True)*Rotation.from_euler('y', -90, degrees=True)*Rotation.from_euler('x', 90, degrees=True)
-    extrinsics = {
-        'position': np.array([0.0, 0.0, 0.0]),
-        'orientation': base_orientation.as_quat(),
-    }
+world = World.from_file(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), '..', 'rotorpy',
+    'worlds', 'double_pillar.json'))
+# Generate surface features for the world. Each feature is a 3D point with
+# an RGB color plus an optional descriptor vector (e.g. SIFT/ALIKED). The
+# camera splats using the colors and streams both colors and descriptors
+# through its output, giving a full ground-truth training signal for VO/VIO
+# and vision-based policies. descriptor_dim attaches synthetic descriptor
+# vectors (L2-normalized, seed-reproducible) to every feature.
+world.generate_surface_features(mode='regular', spacing=0.08, descriptor_noise=0.15,
+                                descriptor_dim=128)  # 128-d SIFT-style synthetic descriptors
+# world.generate_surface_features(mode='random', feature_density=500, descriptor_noise=0.15, descriptor_dim=128)  # density-based random splatter (features/m^2)
+# world.generate_surface_features(mode='edge_uniform', spacing=0.05, descriptor_noise=0.15)  # features along edges, uniform spacing
+# world.generate_surface_features(mode='edge_random', edge_density=200, descriptor_noise=0.15)  # features along edges, random
 
-    intrinsics = {
-        'fx': 400.0, 'fy': 400.0,
-        'width': 640, 'height': 480,
-        'cx': 320.0, 'cy': 240.0,
-        'dist_coeffs': [-0.3, 0.1, 0.0, 0.0, 0.0], # wide lens
-    }
+# Forward-facing camera: camera +z (optical axis) aligned with body +x, with slight upward tilt.
+base_orientation = Rotation.from_euler('x', -45, degrees=True)*Rotation.from_euler('y', -90, degrees=True)*Rotation.from_euler('x', 90, degrees=True)
+extrinsics = {
+    'position': np.array([0.0, 0.0, 0.0]),
+    'orientation': base_orientation.as_quat(),
+}
 
-    # frame_rate decouples the capture rate from sim_rate; None would render
-    # every simulation step. splat_radius enlarges each feature's pixel patch
-    # so features are easier to see in the rendered frames.
-    # feature_output selects which per-feature data the camera returns:
-    #   'all' (default), both RGB colors and descriptor vectors
-    #   'rgb', colors only (descriptors are None) -- for RGB/image-based learning
-    #   'descriptors', descriptors only (colors are None) -- compact VO/VIO data
-    # The rendered image always uses colors; the toggle only trims the returned
-    # arrays, which matters when many frames are collected in bulk.
-    camera = PinholeCamera(intrinsics=intrinsics, extrinsics=extrinsics,
-                           frame_rate=25, splat_radius=3, feature_output='all')
+intrinsics = {
+    'fx': 400.0, 'fy': 400.0,
+    'width': 640, 'height': 480,
+    'cx': 320.0, 'cy': 240.0,
+    'dist_coeffs': [-0.3, 0.1, 0.0, 0.0, 0.0], # wide lens
+}
 
-    # Optional visual noise effect, applied on top of the raw render by
-    # measurement(). Off by default. Tuning knobs (noise_params dict):
-    #   feature_rate  mean number of synthetic features injected per frame
-    #                 (count is Poisson-distributed; the primary intensity knob)
-    #   splat_radius  pixel patch size of each injected feature
-    #   intensity     color strength in [0, 1] (1.0 = full-strength artifacts)
-    #   seed          optional int for reproducible injection (omit for fresh
-    #                 randomness each frame)
-    # camera = PinholeCamera(intrinsics=intrinsics, extrinsics=extrinsics,
-    #                        frame_rate=25, splat_radius=3,
-    #                        noise_params={'feature_rate': 20, 'splat_radius': 2,
-    #                                      'intensity': 0.7})
+# frame_rate decouples the capture rate from sim_rate; None would render
+# every simulation step. splat_radius enlarges each feature's pixel patch
+# so features are easier to see in the rendered frames.
+# feature_output selects which per-feature data the camera returns:
+#   'all' (default), both RGB colors and descriptor vectors
+#   'rgb', colors only (descriptors are None) -- for RGB/image-based learning
+#   'descriptors', descriptors only (colors are None) -- compact VO/VIO data
+# The rendered image always uses colors; the toggle only trims the returned
+# arrays, which matters when many frames are collected in bulk.
+camera = PinholeCamera(intrinsics=intrinsics, extrinsics=extrinsics,
+                        frame_rate=25, splat_radius=3, feature_output='all')
 
-    circle_center = np.array([0, 0, 0])
-    circle_radius = np.array([3, 3, 0])
-    circle_freq = np.array([0.2, 0.2, 0])
+# Optional visual noise effect, applied on top of the raw render by
+# measurement(). Off by default. Tuning knobs (noise_params dict):
+#   feature_rate  mean number of synthetic features injected per frame
+#                 (count is Poisson-distributed; the primary intensity knob)
+#   splat_radius  pixel patch size of each injected feature
+#   intensity     color strength in [0, 1] (1.0 = full-strength artifacts)
+#   seed          optional int for reproducible injection (omit for fresh
+#                 randomness each frame)
+# camera = PinholeCamera(intrinsics=intrinsics, extrinsics=extrinsics,
+#                        frame_rate=25, splat_radius=3,
+#                        noise_params={'feature_rate': 20, 'splat_radius': 2,
+#                                      'intensity': 0.7})
 
-    # ------------------------------------------------------------------
-    # 2. Construct the environment, passing in the camera
-    # ------------------------------------------------------------------
-    sim_instance = Environment(
-        vehicle=Multirotor(quad_params),
-        controller=SE3Control(quad_params),
-        trajectory=ThreeDCircularTraj(
-            center=circle_center,
-            radius=circle_radius,
-            freq=circle_freq,
-            yaw_traj=InwardYawFromTraj(circle_center, circle_radius, circle_freq)),
-        wind_profile=None,
-        world=world,
-        camera=camera,          # OPTIONAL: onboard camera sensor
-        sim_rate=100,
-        safety_margin=0.25,
-    )
+circle_center = np.array([0, 0, 0])
+circle_radius = np.array([3, 3, 0])
+circle_freq = np.array([0.2, 0.2, 0])
 
-    yaw_init = InwardYawFromTraj(circle_center, circle_radius, circle_freq).update(0.0)['yaw']
-    q_init = Rotation.from_euler('z', yaw_init).as_quat()  # [i,j,k,w]
+sim_instance = Environment(
+    vehicle=Multirotor(quad_params),
+    controller=SE3Control(quad_params),
+    trajectory=ThreeDCircularTraj(
+        center=circle_center,
+        radius=circle_radius,
+        freq=circle_freq,
+        yaw_traj=InwardYawFromTraj(circle_center, circle_radius, circle_freq)),
+    wind_profile=None,
+    world=world,
+    camera=camera,          # OPTIONAL: onboard camera sensor
+    sim_rate=100,
+    safety_margin=0.25,
+)
 
-    x0 = {'x': np.array([0, 0, 0]),
-           'v': np.zeros(3),
-           'q': q_init,  # [i,j,k,w]
-           'w': np.zeros(3),
-           'wind': np.array([0, 0, 0]),
-           'rotor_speeds': np.array([1788.53, 1788.53, 1788.53, 1788.53])}
-    sim_instance.vehicle.initial_state = x0
+yaw_init = InwardYawFromTraj(circle_center, circle_radius, circle_freq).update(0.0)['yaw']
+q_init = Rotation.from_euler('z', yaw_init).as_quat()  # [i,j,k,w]
 
-    # ------------------------------------------------------------------
-    # 3. Run. The animation shows the live camera view next to the 3D scene,
-    #    and the plots include sampled frames + visibility statistics.
-    # ------------------------------------------------------------------
-    print("Running simulation...")
-    results = sim_instance.run(
-        t_final=10,
-        plot=True,
-        plot_camera=True,
-        plot_imu=False,
-        plot_mocap=False,
-        animate_bool=True,
-        verbose=True,
-        fname='camera_demo',   # saves camera_demo.mp4 when ffmpeg is available
-    )
+x0 = {'x': np.array([0, 0, 0]),
+        'v': np.zeros(3),
+        'q': q_init,  # [i,j,k,w]
+        'w': np.zeros(3),
+        'wind': np.array([0, 0, 0]),
+        'rotor_speeds': np.array([1788.53, 1788.53, 1788.53, 1788.53])}
+sim_instance.vehicle.initial_state = x0
 
-    # The captured frames live in results['camera_measurements'] with keys
-    # time, image (K,H,W,3 uint8), visible_mask, projected, depth, keypoints,
-    # keypoint_depths, visible_features, colors (K,N,3), visible_colors,
-    # descriptors (K,N,D), visible_descriptors. Save them separately from the
-    # csv since images are far too large for it.
-    sim_instance.save_to_csv("camera_demo.csv")
-    sim_instance.save_camera_data("rotorpy_demo", save_pngs=True)
+""" 
+Run and postprocessing
+"""
+print("Running simulation...")
+results = sim_instance.run(
+    t_final=10,
+    plot=True,
+    plot_camera=True,
+    plot_imu=False,
+    plot_mocap=False,
+    animate_bool=True,
+    verbose=True,
+    fname='camera_demo',   # saves camera_demo.mp4 when ffmpeg is available
+)
 
-
-if __name__ == "__main__":
-    main()
+# The captured frames live in results['camera_measurements'] with keys
+# time, image (K,H,W,3 uint8), visible_mask, projected, depth, keypoints,
+# keypoint_depths, visible_features, colors (K,N,3), visible_colors,
+# descriptors (K,N,D), visible_descriptors. Save them separately from the
+# csv since images are far too large for it.
+sim_instance.save_to_csv("camera_demo.csv")
+sim_instance.save_camera_data("examples/rotorpy_demo", save_pngs=True)

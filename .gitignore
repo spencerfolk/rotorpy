@@ -141,10 +141,14 @@ waypoint_traj.py
 /tests/*.pdf
 /tests/*.jpg
 
-# Ignore example figures.
+# Ignore example figures and data.
 /examples/*.png
 /examples/*.gif
-rotorpy_demo_frames/
+/examples/*.mp4
+/examples/**/*.png
+/examples/**/*.pt
+/examples/**/*.gif
+/examples/**/*.mp4
 
 # DS_Store
 *.DS_Store
